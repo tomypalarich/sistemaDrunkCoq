@@ -89,18 +89,52 @@ Listo, tu código ya está en GitHub. El archivo `.env` con tus credenciales rea
 
 ---
 
-## 7. Publicar la web online (gratis)
+## 7. Publicar la web online con GitHub Pages
 
-La forma más simple es con **Vercel**:
+Este proyecto ya viene configurado para publicarse en:
 
-1. Entrá a [vercel.com](https://vercel.com/) y creá una cuenta con tu GitHub.
-2. Hacé clic en **Add New → Project** y elegí el repositorio `drunkcoq-eventos`.
-3. Vercel detecta automáticamente que es un proyecto Vite. Antes de desplegar, andá a **Environment Variables** y cargá ahí las mismas 6 variables `VITE_FIREBASE_...` que pusiste en tu `.env`.
-4. Hacé clic en **Deploy**. En un par de minutos tenés tu app online con una URL pública.
+**https://tomypalarich.github.io/sistemaDrunkCoq/**
 
-Cada vez que hagas `git push` a `main`, Vercel vuelve a publicar la versión actualizada automáticamente.
+usando un proceso automático (GitHub Actions) que compila el proyecto solo, cada vez que hacés `git push`. Seguí estos pasos una sola vez:
 
-(Alternativa: [Netlify](https://netlify.com) funciona de forma muy similar.)
+### 7.1 Cargar tus claves de Firebase como "secretos" del repositorio
+
+Como el archivo `.env` no se sube a GitHub, tenés que cargar esas mismas 6 claves directamente en GitHub para que el proceso automático las use al compilar:
+
+1. En tu repositorio de GitHub, andá a **Settings → Secrets and variables → Actions**.
+2. Hacé clic en **"New repository secret"** y cargá, una por una, estas 6 claves (nombre exacto a la izquierda, tu valor de Firebase a la derecha):
+
+```
+VITE_FIREBASE_API_KEY
+VITE_FIREBASE_AUTH_DOMAIN
+VITE_FIREBASE_PROJECT_ID
+VITE_FIREBASE_STORAGE_BUCKET
+VITE_FIREBASE_MESSAGING_SENDER_ID
+VITE_FIREBASE_APP_ID
+```
+
+### 7.2 Activar GitHub Pages con "GitHub Actions" como origen
+
+1. En el repositorio, andá a **Settings → Pages**.
+2. Donde dice **"Source"**, elegí **"GitHub Actions"** (no "Deploy from a branch").
+
+### 7.3 Subir el código
+
+```bash
+git add .
+git commit -m "Configurar publicación automática en GitHub Pages"
+git push
+```
+
+Con el push, GitHub va a compilar el proyecto solo (mirá el progreso en la pestaña **"Actions"** de tu repo) y en 1-2 minutos tu app va a estar disponible en `https://tomypalarich.github.io/sistemaDrunkCoq/`.
+
+A partir de ahora, cada vez que hagas `git push` a la rama `main`, la página se actualiza sola.
+
+> ⚠️ Si en algún momento cambiás el nombre del repositorio, tenés que actualizar el valor `base` en `vite.config.js` para que coincida (ej: `base: "/nuevo-nombre/"`), o la página va a verse en blanco otra vez.
+
+### Alternativa: Vercel
+
+Si preferís no depender de GitHub Actions, [Vercel](https://vercel.com) es más simple: conectás el repo, cargás las mismas 6 variables de entorno en su panel, y listo. Funciona igual de bien con Firebase.
 
 ---
 
