@@ -56,7 +56,7 @@ export async function logMovement(text) {
 }
 
 export async function addProduct(data) {
-  await addDoc(collection(db, "products"), data);
+  await addDoc(collection(db, "products"), { ...data, createdAt: serverTimestamp() });
   await logMovement(`Se agregó nuevo producto "${data.name}" con ${data.stock} unidades`);
 }
 
@@ -114,7 +114,7 @@ export async function deleteProvider(id) {
 /* ----------------------------- PRESUPUESTOS ----------------------------- */
 
 export async function addBudget(data) {
-  await addDoc(collection(db, "budgets"), data);
+  await addDoc(collection(db, "budgets"), { ...data, createdAt: serverTimestamp() });
 }
 
 export async function updateBudget(id, data) {
@@ -158,8 +158,12 @@ export async function seedDatabase() {
     providerIdMap[mockId] = ref.id;
   }
 
-  for (const product of mockProducts) {
-    await addDoc(collection(db, "products"), product);
+  for (const { providerMockId, ...product } of mockProducts) {
+    await addDoc(collection(db, "products"), {
+      ...product,
+      providerId: providerIdMap[providerMockId] || "",
+      createdAt: serverTimestamp(),
+    });
   }
 
   for (const budget of mockBudgets) {
@@ -167,6 +171,7 @@ export async function seedDatabase() {
       ...budget,
       providerIds: budget.providerIds.map((mockId) => providerIdMap[mockId]).filter(Boolean),
       contactProviderId: providerIdMap[budget.contactProviderId] || "",
+      createdAt: serverTimestamp(),
     });
   }
 
