@@ -1,34 +1,197 @@
-@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600&display=swap");
+import {
+  collection,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  query,
+  orderBy,
+  limit,
+  serverTimestamp,
+  writeBatch,
+  getDocs,
+  setDoc,
+} from "firebase/firestore";
+import { db } from "./firebase";
+import { mockProducts, mockProviders, mockBudgets, mockMovements, DEFAULT_STOCK_CATEGORIES, DEFAULT_PROVIDER_CATEGORIES } from "./mockData";
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+const mapDocs = (snapshot) => snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-body {
-  font-family: "Inter", sans-serif;
+/* ----------------------------- SUSCRIPCIONES EN TIEMPO REAL ----------------------------- */
+
+export function subscribeProducts(onChange) {
+  const q = query(collection(db, "products"), orderBy("name"));
+  return onSnapshot(q, (snap) => onChange(mapDocs(snap)));
 }
 
-.font-display {
-  font-family: "Playfair Display", serif;
+export function subscribeProviders(onChange) {
+  const q = query(collection(db, "providers"), orderBy("name"));
+  return onSnapshot(q, (snap) => onChange(mapDocs(snap)));
 }
 
-/* Al imprimir (o "Guardar como PDF"), ocultamos toda la interfaz de la app
-   y dejamos ver solo el contenido marcado con id="printable-planilla". */
-@media print {
-  body * {
-    visibility: hidden;
+export function subscribeBudgets(onChange) {
+  const q = query(collection(db, "budgets"), orderBy("date"));
+  return onSnapshot(q, (snap) => onChange(mapDocs(snap)));
+}
+
+export function subscribeMovements(onChange) {
+  const q = query(collection(db, "movements"), orderBy("createdAt", "desc"), limit(8));
+  return onSnapshot(q, (snap) => onChange(mapDocs(snap)));
+}
+
+export function subscribeStockCategories(onChange) {
+  const q = query(collection(db, "stockCategories"), orderBy("name"));
+  return onSnapshot(q, (snap) => onChange(mapDocs(snap)));
+}
+
+export function subscribeProviderCategories(onChange) {
+  const q = query(collection(db, "providerCategories"), orderBy("name"));
+  return onSnapshot(q, (snap) => onChange(mapDocs(snap)));
+}
+
+/* ----------------------------- PRODUCTOS / STOCK ----------------------------- */
+
+export async function logMovement(text) {
+  await addDoc(collection(db, "movements"), { text, createdAt: serverTimestamp() });
+}
+
+export async function addProduct(data) {
+  await addDoc(collection(db, "products"), { ...data, createdAt: serverTimestamp() });
+  await logMovement(`Se agregó nuevo producto "${data.name}" con ${data.stock} unidades`);
+}
+
+export async function updateProduct(id, data) {
+  await updateDoc(doc(db, "products", id), data);
+  await logMovement(`Se actualizó "${data.name}" — stock ahora en ${data.stock}`);
+}
+
+export async function deleteProduct(product) {
+  await deleteDoc(doc(db, "products", product.id));
+  await logMovement(`Se eliminó el producto "${product.name}"`);
+}
+
+export async function deleteManyProducts(products) {
+  const batch = writeBatch(db);
+  products.forEach((p) => batch.delete(doc(db, "products", p.id)));
+  await batch.commit();
+  await logMovement(`Se eliminaron ${products.length} productos del stock`);
+}
+
+/* ----------------------------- CATEGORÍAS ----------------------------- */
+
+export async function addStockCategory(name, existing) {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const found = existing.find((c) => c.name.toLowerCase() === trimmed.toLowerCase());
+  if (found) return found;
+  const ref = await addDoc(collection(db, "stockCategories"), { name: trimmed });
+  return { id: ref.id, name: trimmed };
+}
+
+export async function addProviderCategory(name, existing) {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const found = existing.find((c) => c.name.toLowerCase() === trimmed.toLowerCase());
+  if (found) return found;
+  const ref = await addDoc(collection(db, "providerCategories"), { name: trimmed });
+  return { id: ref.id, name: trimmed };
+}
+
+/* ----------------------------- PROVEEDORES ----------------------------- */
+
+export async function addProvider(data) {
+  await addDoc(collection(db, "providers"), data);
+}
+
+export async function updateProvider(id, data) {
+  await updateDoc(doc(db, "providers", id), data);
+}
+
+export async function deleteProvider(id) {
+  await deleteDoc(doc(db, "providers", id));
+}
+
+/* ----------------------------- PRESUPUESTOS ----------------------------- */
+
+export async function addBudget(data) {
+  await addDoc(collection(db, "budgets"), { ...data, createdAt: serverTimestamp() });
+}
+
+export async function updateBudget(id, data) {
+  await updateDoc(doc(db, "budgets", id), data);
+}
+
+export async function deleteBudget(id) {
+  await deleteDoc(doc(db, "budgets", id));
+}
+
+export async function deleteManyBudgets(ids) {
+  const batch = writeBatch(db);
+  ids.forEach((id) => batch.delete(doc(db, "budgets", id)));
+  await batch.commit();
+}
+
+/* ----------------------------- PLANILLAS ----------------------------- */
+
+// Cada planilla se guarda como UN documento en Firestore, con id
+// "<idDelPresupuesto>_A" o "<idDelPresupuesto>_B". Así cada presupuesto
+// tiene como máximo una Planilla A y una Planilla B asociadas.
+
+export function subscribePlanilla(planillaId, onChange) {
+  const ref = doc(db, "planillas", planillaId);
+  return onSnapshot(ref, (snap) => onChange(snap.exists() ? { id: snap.id, ...snap.data() } : null));
+}
+
+export async function savePlanilla(planillaId, data) {
+  await setDoc(doc(db, "planillas", planillaId), { ...data, updatedAt: serverTimestamp() }, { merge: true });
+}
+
+/* ----------------------------- CARGA DE DATOS DE EJEMPLO ----------------------------- */
+
+export async function isDatabaseEmpty() {
+  const [products, providers, budgets] = await Promise.all([
+    getDocs(collection(db, "products")),
+    getDocs(collection(db, "providers")),
+    getDocs(collection(db, "budgets")),
+  ]);
+  return products.empty && providers.empty && budgets.empty;
+}
+
+export async function seedDatabase() {
+  // Categorías primero.
+  for (const name of DEFAULT_STOCK_CATEGORIES) {
+    await addDoc(collection(db, "stockCategories"), { name });
   }
-  #printable-planilla,
-  #printable-planilla * {
-    visibility: visible;
+  for (const name of DEFAULT_PROVIDER_CATEGORIES) {
+    await addDoc(collection(db, "providerCategories"), { name });
   }
-  #printable-planilla {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
+
+  // Proveedores primero, para mapear sus ids reales de Firestore.
+  const providerIdMap = {};
+  for (const { mockId, ...rest } of mockProviders) {
+    const ref = await addDoc(collection(db, "providers"), rest);
+    providerIdMap[mockId] = ref.id;
   }
-  .no-print {
-    display: none !important;
+
+  for (const { providerMockId, ...product } of mockProducts) {
+    await addDoc(collection(db, "products"), {
+      ...product,
+      providerId: providerIdMap[providerMockId] || "",
+      createdAt: serverTimestamp(),
+    });
+  }
+
+  for (const budget of mockBudgets) {
+    await addDoc(collection(db, "budgets"), {
+      ...budget,
+      providerIds: budget.providerIds.map((mockId) => providerIdMap[mockId]).filter(Boolean),
+      contactProviderId: providerIdMap[budget.contactProviderId] || "",
+      createdAt: serverTimestamp(),
+    });
+  }
+
+  for (const text of mockMovements) {
+    await addDoc(collection(db, "movements"), { text, createdAt: serverTimestamp() });
   }
 }

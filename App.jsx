@@ -1,60 +1,34 @@
-name: Publicar en GitHub Pages
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600&display=swap");
 
-on:
-  push:
-    branches: ["main"]
-  workflow_dispatch:
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+body {
+  font-family: "Inter", sans-serif;
+}
 
-concurrency:
-  group: "pages"
-  cancel-in-progress: true
+.font-display {
+  font-family: "Playfair Display", serif;
+}
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Descargar el código
-        uses: actions/checkout@v4
-
-      - name: Configurar Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: "npm"
-
-      - name: Instalar dependencias
-        run: npm ci
-
-      - name: Compilar el proyecto
-        run: npm run build
-        env:
-          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
-          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
-          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
-          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
-          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
-
-      - name: Preparar Pages
-        uses: actions/configure-pages@v4
-
-      - name: Subir el resultado compilado
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: "./dist"
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Publicar en GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+/* Al imprimir (o "Guardar como PDF"), ocultamos toda la interfaz de la app
+   y dejamos ver solo el contenido marcado con id="printable-planilla". */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-planilla,
+  #printable-planilla * {
+    visibility: visible;
+  }
+  #printable-planilla {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
