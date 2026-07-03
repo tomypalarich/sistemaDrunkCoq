@@ -181,10 +181,12 @@ drunkcoq-eventos/
     └── mockData.js              ← datos de ejemplo usados solo para precargar la base
 ```
 
-## 10. Las tres secciones
+## 10. Las secciones
 
-- **Stock**: alta, edición y baja (individual o múltiple) de productos, categorías creables al vuelo desde el propio formulario ("+ Añadir categoría nueva…"), búsqueda, filtro por categoría, alerta de stock mínimo, ordenamiento alfabético/por cantidad e historial de movimientos.
-- **Presupuestos**: gestión de cotizaciones de eventos, con un buscador de proveedores con sugerencias en vivo (podés asignar varios a un mismo presupuesto) y un proveedor marcado como el que hizo el contacto con el cliente (resaltado en verde).
-- **Proveedores**: alta, edición y baja de proveedores, categorías creables al vuelo igual que en Stock, filtro por categoría y ordenamiento alfabético o por categoría. Los proveedores cargados acá aparecen automáticamente disponibles al crear o editar un presupuesto.
+- **Stock**: productos con número correlativo automático, precio de costo, precio de venta y proveedor asociado. Alta/edición/baja (individual o múltiple), categorías creables al vuelo, búsqueda, filtros, alerta de stock mínimo, ordenamiento e historial de movimientos.
+- **Administración → Presupuestos**: cotizaciones de eventos con número correlativo automático (#001, #002...), tipo de barra, lista de adicionales (con precio) y monto base, con el total calculado automáticamente. Buscador de proveedores con sugerencias en vivo y proveedor de contacto resaltado.
+- **Administración → Centro de Costos**: pantalla analítica en tiempo real con estado de los presupuestos, valor total del inventario (costo y venta), y comparativa de gasto de stock vs. facturación de presupuestos aprobados.
+- **Planillas**: elegí un presupuesto y completá digitalmente la Planilla A (herramientas y logística) o la Planilla B (mercadería y consumos), con botón para imprimir o guardar como PDF (usa el diálogo de impresión del navegador, con hoja limpia sin la interfaz de la app).
+- **Proveedores**: alta, edición y baja, categorías creables al vuelo, filtro y ordenamiento por categoría o alfabético. Los proveedores cargados acá aparecen disponibles automáticamente en Stock y en Presupuestos.
 
-Todos los datos —incluidas las categorías— se sincronizan en tiempo real: si dos personas tienen la app abierta a la vez, los cambios de una se reflejan al instante en la pantalla de la otra.
+Todos los datos —incluidas las planillas y categorías— se sincronizan en tiempo real: si dos personas tienen la app abierta a la vez, los cambios de una se reflejan al instante en la pantalla de la otra.

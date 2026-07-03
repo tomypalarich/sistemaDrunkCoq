@@ -11,6 +11,7 @@ import {
   serverTimestamp,
   writeBatch,
   getDocs,
+  setDoc,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { mockProducts, mockProviders, mockBudgets, mockMovements, DEFAULT_STOCK_CATEGORIES, DEFAULT_PROVIDER_CATEGORIES } from "./mockData";
@@ -129,6 +130,21 @@ export async function deleteManyBudgets(ids) {
   const batch = writeBatch(db);
   ids.forEach((id) => batch.delete(doc(db, "budgets", id)));
   await batch.commit();
+}
+
+/* ----------------------------- PLANILLAS ----------------------------- */
+
+// Cada planilla se guarda como UN documento en Firestore, con id
+// "<idDelPresupuesto>_A" o "<idDelPresupuesto>_B". Así cada presupuesto
+// tiene como máximo una Planilla A y una Planilla B asociadas.
+
+export function subscribePlanilla(planillaId, onChange) {
+  const ref = doc(db, "planillas", planillaId);
+  return onSnapshot(ref, (snap) => onChange(snap.exists() ? { id: snap.id, ...snap.data() } : null));
+}
+
+export async function savePlanilla(planillaId, data) {
+  await setDoc(doc(db, "planillas", planillaId), { ...data, updatedAt: serverTimestamp() }, { merge: true });
 }
 
 /* ----------------------------- CARGA DE DATOS DE EJEMPLO ----------------------------- */

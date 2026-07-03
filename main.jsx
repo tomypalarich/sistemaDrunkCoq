@@ -3,7 +3,7 @@ import {
   Search, Plus, Pencil, Trash2, X, ChevronUp, ChevronDown,
   AlertTriangle, Menu, Package, FileText, Users, Phone,
   MapPin, Calendar, ClipboardList, CheckSquare, Square, Database, Loader2, Tag,
-  BarChart3, DollarSign, Wallet, TrendingUp, ChevronRight
+  BarChart3, DollarSign, Wallet, TrendingUp, ChevronRight, Printer, Save
 } from "lucide-react";
 import {
   subscribeProducts, subscribeProviders, subscribeBudgets, subscribeMovements,
@@ -12,9 +12,13 @@ import {
   addProvider, updateProvider, deleteProvider,
   addBudget, updateBudget, deleteBudget, deleteManyBudgets,
   addStockCategory, addProviderCategory,
+  subscribePlanilla, savePlanilla,
   seedDatabase,
 } from "./firestoreApi";
 import { TIPOS_EVENTO, ESTADOS } from "./mockData";
+import {
+  PLANILLA_A_NUMBER_SECTIONS, PLANILLA_A_CHECKLIST_SECTION, PLANILLA_B_TABLE_SECTIONS,
+} from "./planillaTemplates";
 
 /* ----------------------------- HELPERS ----------------------------- */
 
@@ -1335,6 +1339,315 @@ function ProvidersSection({ providers, categories, loading }) {
 
 /* ----------------------------- NAVIGATION ----------------------------- */
 
+/* ----------------------------- PLANILLAS ----------------------------- */
+
+// Convierte texto libre en algo apto para nombre de archivo:
+// sin acentos, sin espacios raros, sin caracteres especiales.
+function slugify(text) {
+  return (text || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // saca acentos
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function printPlanilla({ tipo, budget }) {
+  const filename = `Planilla_${tipo}_${slugify(budget?.eventType)}_${slugify(budget?.date)}`;
+  const prevTitle = document.title;
+  document.title = filename;
+  const restore = () => { document.title = prevTitle; window.removeEventListener("afterprint", restore); };
+  window.addEventListener("afterprint", restore);
+  window.print();
+  // Por si el navegador no dispara "afterprint" (pasa en algunos casos), restauramos igual después de un rato.
+  setTimeout(restore, 2000);
+}
+
+function PlanillaHeader({ budget }) {
+  return (
+    <div className="grid grid-cols-3 gap-4 mb-6 pb-4 border-b border-gray-200">
+      <div>
+        <p className="text-xs text-gray-400 uppercase tracking-wide">Fecha</p>
+        <p className="text-sm font-medium text-zinc-950">{formatDate(budget.date)}</p>
+      </div>
+      <div>
+        <p className="text-xs text-gray-400 uppercase tracking-wide">Tipo de evento</p>
+        <p className="text-sm font-medium text-zinc-950">{budget.eventType}</p>
+      </div>
+      <div>
+        <p className="text-xs text-gray-400 uppercase tracking-wide">Localidad</p>
+        <p className="text-sm font-medium text-zinc-950">{budget.locality}</p>
+      </div>
+    </div>
+  );
+}
+
+function PlanillaNumberGrid({ title, items, values, onChangeItem }) {
+  return (
+    <div className="mb-6">
+      <h4 className="text-sm font-medium text-zinc-950 mb-2">{title}</h4>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-2 border border-gray-200 rounded-xl p-4 print:border-0 print:p-0">
+        {items.map((item) => (
+          <label key={item} className="flex items-center justify-between gap-2 text-sm">
+            <span className="text-gray-600">{item}</span>
+            <input
+              type="number"
+              min="0"
+              value={values[item] ?? ""}
+              onChange={(e) => onChangeItem(item, e.target.value)}
+              className="w-16 rounded border border-gray-300 px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-zinc-950/10 print:border-0 print:border-b print:rounded-none"
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PlanillaChecklist({ title, items, values, onChangeItem }) {
+  return (
+    <div className="mb-6">
+      <h4 className="text-sm font-medium text-zinc-950 mb-2">{title}</h4>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border border-gray-200 rounded-xl p-4 print:border-0 print:p-0">
+        {items.map((item) => {
+          const v = values[item] || { checked: false, note: "" };
+          return (
+            <div key={item} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={v.checked}
+                onChange={(e) => onChangeItem(item, { ...v, checked: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-300 text-zinc-950 focus:ring-zinc-950/20"
+              />
+              <span className="text-gray-600 w-40 shrink-0">{item}</span>
+              <input
+                value={v.note}
+                onChange={(e) => onChangeItem(item, { ...v, note: e.target.value })}
+                placeholder="Observación…"
+                className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-950/10 print:border-0 print:border-b print:rounded-none"
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PlanillaA({ budget, planilla, onSave }) {
+  const [values, setValues] = useState(() => planilla || {});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { setValues(planilla || {}); }, [planilla]);
+
+  const updateSection = (sectionKey, item, value) => {
+    setValues((prev) => ({ ...prev, [sectionKey]: { ...(prev[sectionKey] || {}), [item]: value } }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    await onSave(values);
+    setSaving(false);
+  };
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 no-print">
+        <p className="text-xs text-gray-400">Los cambios no se guardan solos: usá "Guardar" antes de imprimir si hiciste modificaciones.</p>
+        <div className="flex gap-2">
+          <GhostButton icon={Save} onClick={handleSave}>{saving ? "Guardando…" : "Guardar"}</GhostButton>
+          <PrimaryButton icon={Printer} onClick={() => printPlanilla({ tipo: "A", budget })}>Imprimir / Guardar PDF</PrimaryButton>
+        </div>
+      </div>
+
+      <div id="printable-planilla" className="print-area bg-white border border-gray-200 rounded-2xl p-5 print:border-0 print:p-0">
+        <h3 className="font-display text-xl text-zinc-950 mb-1">Planilla A — Herramientas y Logística General</h3>
+        <PlanillaHeader budget={budget} />
+
+        {PLANILLA_A_NUMBER_SECTIONS.map((section) => (
+          <PlanillaNumberGrid
+            key={section.key}
+            title={section.title}
+            items={section.items}
+            values={values[section.key] || {}}
+            onChangeItem={(item, v) => updateSection(section.key, item, v)}
+          />
+        ))}
+
+        <PlanillaChecklist
+          title={PLANILLA_A_CHECKLIST_SECTION.title}
+          items={PLANILLA_A_CHECKLIST_SECTION.items}
+          values={values[PLANILLA_A_CHECKLIST_SECTION.key] || {}}
+          onChangeItem={(item, v) => updateSection(PLANILLA_A_CHECKLIST_SECTION.key, item, v)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PlanillaTable({ title, columns, items, values, onChangeCell }) {
+  return (
+    <div className="mb-6">
+      <h4 className="text-sm font-medium text-zinc-950 mb-2">{title}</h4>
+      <div className="overflow-x-auto border border-gray-200 rounded-xl print:border-0">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-gray-400 uppercase tracking-wide border-b border-gray-100">
+              <th className="py-2 px-2 w-8">N°</th>
+              <th className="py-2 px-2">Producto</th>
+              {columns.map((col) => (
+                <th key={col.key} className="py-2 px-2">{col.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, index) => {
+              const row = values[item] || {};
+              return (
+                <tr key={item} className="border-b border-gray-50">
+                  <td className="py-1.5 px-2 text-gray-400">{index + 1}</td>
+                  <td className="py-1.5 px-2 font-medium text-zinc-950">{item}</td>
+                  {columns.map((col) => (
+                    <td key={col.key} className="py-1.5 px-2">
+                      <input
+                        value={row[col.key] || ""}
+                        onChange={(e) => onChangeCell(item, col.key, e.target.value)}
+                        className="w-full rounded border border-gray-300 px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-950/10 print:border-0 print:border-b print:rounded-none"
+                      />
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PlanillaB({ budget, planilla, onSave }) {
+  const [values, setValues] = useState(() => planilla || {});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { setValues(planilla || {}); }, [planilla]);
+
+  const updateCell = (sectionKey, item, colKey, value) => {
+    setValues((prev) => ({
+      ...prev,
+      [sectionKey]: { ...(prev[sectionKey] || {}), [item]: { ...((prev[sectionKey] || {})[item] || {}), [colKey]: value } },
+    }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    await onSave(values);
+    setSaving(false);
+  };
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 no-print">
+        <p className="text-xs text-gray-400">Los cambios no se guardan solos: usá "Guardar" antes de imprimir si hiciste modificaciones.</p>
+        <div className="flex gap-2">
+          <GhostButton icon={Save} onClick={handleSave}>{saving ? "Guardando…" : "Guardar"}</GhostButton>
+          <PrimaryButton icon={Printer} onClick={() => printPlanilla({ tipo: "B", budget })}>Imprimir / Guardar PDF</PrimaryButton>
+        </div>
+      </div>
+
+      <div id="printable-planilla" className="print-area bg-white border border-gray-200 rounded-2xl p-5 print:border-0 print:p-0">
+        <h3 className="font-display text-xl text-zinc-950 mb-1">Planilla B — Mercadería y Consumos</h3>
+        <PlanillaHeader budget={budget} />
+
+        {PLANILLA_B_TABLE_SECTIONS.map((section) => (
+          <PlanillaTable
+            key={section.key}
+            title={section.title}
+            columns={section.columns}
+            items={section.items}
+            values={values[section.key] || {}}
+            onChangeCell={(item, colKey, v) => updateCell(section.key, item, colKey, v)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PlanillasSection({ budgets, loading }) {
+  const [selectedBudgetId, setSelectedBudgetId] = useState("");
+  const [tab, setTab] = useState("A");
+  const [planillaA, setPlanillaA] = useState(null);
+  const [planillaB, setPlanillaB] = useState(null);
+  const [search, setSearch] = useState("");
+
+  const numbers = useSequentialNumbers(budgets);
+  const budget = budgets.find((b) => b.id === selectedBudgetId);
+
+  const filteredBudgets = useMemo(
+    () => budgets.filter((b) => b.eventType.toLowerCase().includes(search.toLowerCase()) || b.venue.toLowerCase().includes(search.toLowerCase())),
+    [budgets, search]
+  );
+
+  useEffect(() => {
+    if (!selectedBudgetId) { setPlanillaA(null); setPlanillaB(null); return; }
+    const unsubA = subscribePlanilla(`${selectedBudgetId}_A`, setPlanillaA);
+    const unsubB = subscribePlanilla(`${selectedBudgetId}_B`, setPlanillaB);
+    return () => { unsubA(); unsubB(); };
+  }, [selectedBudgetId]);
+
+  return (
+    <div>
+      <SectionHeader eyebrow="Sección · ♠" title="Planillas" />
+
+      <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 mb-6 no-print">
+        <FieldLabel>Elegí un presupuesto para completar su planilla</FieldLabel>
+        <div className="flex flex-wrap gap-3">
+          <SearchInput value={search} onChange={setSearch} placeholder="Buscar presupuesto por evento o salón…" />
+          <Select
+            value={selectedBudgetId}
+            onChange={setSelectedBudgetId}
+            className="min-w-[260px]"
+            options={[
+              <option key="" value="">Seleccionar presupuesto…</option>,
+              ...filteredBudgets.map((b) => (
+                <option key={b.id} value={b.id}>
+                  #{String(numbers[b.id] || 0).padStart(3, "0")} · {b.eventType} · {b.venue} · {formatDate(b.date)}
+                </option>
+              )),
+            ]}
+          />
+        </div>
+      </div>
+
+      {!budget ? (
+        <EmptyState icon={Printer} message="Elegí un presupuesto arriba para ver y completar sus planillas." />
+      ) : (
+        <>
+          <div className="flex gap-2 mb-4 no-print">
+            <button
+              onClick={() => setTab("A")}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === "A" ? "bg-zinc-950 text-white" : "bg-white border border-gray-300 text-gray-600 hover:bg-gray-50"}`}
+            >
+              Planilla A · Herramientas y Logística
+            </button>
+            <button
+              onClick={() => setTab("B")}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === "B" ? "bg-zinc-950 text-white" : "bg-white border border-gray-300 text-gray-600 hover:bg-gray-50"}`}
+            >
+              Planilla B · Mercadería y Consumos
+            </button>
+          </div>
+
+          {tab === "A" ? (
+            <PlanillaA budget={budget} planilla={planillaA} onSave={(data) => savePlanilla(`${selectedBudgetId}_A`, data)} />
+          ) : (
+            <PlanillaB budget={budget} planilla={planillaB} onSave={(data) => savePlanilla(`${selectedBudgetId}_B`, data)} />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 const NAV_ITEMS = [
   { key: "stock", label: "Stock", icon: Package },
   {
@@ -1346,6 +1659,7 @@ const NAV_ITEMS = [
       { key: "costcenter", label: "Centro de Costos", icon: BarChart3 },
     ],
   },
+  { key: "planillas", label: "Planillas", icon: Printer },
   { key: "providers", label: "Proveedores", icon: Users },
 ];
 
@@ -1357,7 +1671,7 @@ function Sidebar({ section, setSection }) {
   const [adminOpen, setAdminOpen] = useState(true);
 
   return (
-    <aside className="hidden md:flex md:flex-col w-60 shrink-0 bg-zinc-950 text-white min-h-screen px-4 py-6">
+    <aside className="hidden md:flex md:flex-col w-60 shrink-0 bg-zinc-950 text-white min-h-screen px-4 py-6 no-print">
       <div className="flex items-center gap-2.5 px-2 mb-10">
         <SpadeMark className="w-6 h-6 text-white" />
         <div>
@@ -1431,7 +1745,7 @@ function Sidebar({ section, setSection }) {
 
 function MobileTopbar() {
   return (
-    <div className="md:hidden flex items-center justify-between px-4 py-3.5 bg-zinc-950 text-white sticky top-0 z-30">
+    <div className="md:hidden flex items-center justify-between px-4 py-3.5 bg-zinc-950 text-white sticky top-0 z-30 no-print">
       <div className="flex items-center gap-2">
         <SpadeMark className="w-5 h-5" />
         <p className="font-display text-base tracking-wide">DrunkCoq Eventos</p>
@@ -1442,7 +1756,7 @@ function MobileTopbar() {
 
 function MobileNav({ section, setSection }) {
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800 flex z-30">
+    <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800 flex z-30 no-print">
       {FLAT_NAV_ITEMS.map((item) => {
         const Icon = item.icon;
         const active = section === item.key;
@@ -1561,6 +1875,7 @@ export default function App() {
           {section === "budgets" && <AdminSection budgets={budgets} providers={providers} loading={!loaded.budgets} />}
           {section === "costcenter" && <CostCenterSection products={products} budgets={budgets} loading={!loaded.products || !loaded.budgets} />}
           {section === "providers" && <ProvidersSection providers={providers} categories={providerCategories} loading={!loaded.providers} />}
+          {section === "planillas" && <PlanillasSection budgets={budgets} loading={!loaded.budgets} />}
         </main>
       </div>
 
