@@ -11,3 +11,24 @@ body {
 .font-display {
   font-family: "Playfair Display", serif;
 }
+
+/* Al imprimir (o "Guardar como PDF"), ocultamos toda la interfaz de la app
+   y dejamos ver solo el contenido marcado con id="printable-planilla". */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-planilla,
+  #printable-planilla * {
+    visibility: visible;
+  }
+  #printable-planilla {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
