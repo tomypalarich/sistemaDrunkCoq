@@ -17,7 +17,9 @@ import {
 } from "./firestoreApi";
 import { TIPOS_EVENTO, ESTADOS } from "./mockData";
 import {
-  PLANILLA_A_NUMBER_SECTIONS, PLANILLA_A_CHECKLIST_SECTION, PLANILLA_B_TABLE_SECTIONS,
+  PLANILLA_A_NUMBER_SECTIONS, PLANILLA_A_LINE_SECTION, PLANILLA_A_HEADER_CHECKS,
+  PLANILLA_B_TABLE_SECTIONS, PLANILLA_B_NUMBER_SECTIONS, PLANILLA_B_LABELED_SECTIONS,
+  PLANILLA_B_STOCK_TABLE_SECTIONS, PLANILLA_B_HEADER_CHECKS,
 } from "./planillaTemplates";
 
 /* ----------------------------- HELPERS ----------------------------- */
@@ -1361,20 +1363,41 @@ function printPlanilla({ tipo, budget }) {
   setTimeout(restore, 2000);
 }
 
-function PlanillaHeader({ budget }) {
+function CheckBox({ label, checked, onChange }) {
   return (
-    <div className="grid grid-cols-3 gap-4 mb-6 pb-4 border-b border-gray-200">
-      <div>
-        <p className="text-xs text-gray-400 uppercase tracking-wide">Fecha</p>
-        <p className="text-sm font-medium text-zinc-950">{formatDate(budget.date)}</p>
+    <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+      <input
+        type="checkbox"
+        checked={!!checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="w-4 h-4 rounded border-gray-300 text-zinc-950 focus:ring-zinc-950/20"
+      />
+      <span className="text-gray-600">{label}</span>
+    </label>
+  );
+}
+
+function PlanillaHeader({ budget, checks, headerChecks, onChangeCheck }) {
+  return (
+    <div className="flex flex-wrap items-end justify-between gap-4 mb-6 pb-4 border-b border-gray-200">
+      <div className="flex flex-wrap gap-6">
+        <div>
+          <p className="text-xs text-gray-400 uppercase tracking-wide">Fecha</p>
+          <p className="text-sm font-medium text-zinc-950">{formatDate(budget.date)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-gray-400 uppercase tracking-wide">Tipo de evento</p>
+          <p className="text-sm font-medium text-zinc-950">{budget.eventType}</p>
+        </div>
+        <div>
+          <p className="text-xs text-gray-400 uppercase tracking-wide">Localidad</p>
+          <p className="text-sm font-medium text-zinc-950">{budget.locality}</p>
+        </div>
       </div>
-      <div>
-        <p className="text-xs text-gray-400 uppercase tracking-wide">Tipo de evento</p>
-        <p className="text-sm font-medium text-zinc-950">{budget.eventType}</p>
-      </div>
-      <div>
-        <p className="text-xs text-gray-400 uppercase tracking-wide">Localidad</p>
-        <p className="text-sm font-medium text-zinc-950">{budget.locality}</p>
+      <div className="flex gap-4">
+        {headerChecks.map((c) => (
+          <CheckBox key={c.key} label={c.label} checked={checks[c.key]} onChange={(v) => onChangeCheck(c.key, v)} />
+        ))}
       </div>
     </div>
   );
@@ -1402,88 +1425,56 @@ function PlanillaNumberGrid({ title, items, values, onChangeItem }) {
   );
 }
 
-function PlanillaChecklist({ title, items, values, onChangeItem }) {
+// Sección de ítems con "marca" fija (impresa, no editable) + una cantidad
+// editable. Como el nombre+marca se puede repetir, cada ítem se identifica
+// por su posición en la lista (índice), no por el texto.
+function PlanillaLabeledGrid({ title, items, values, onChangeItem }) {
   return (
     <div className="mb-6">
       <h4 className="text-sm font-medium text-zinc-950 mb-2">{title}</h4>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border border-gray-200 rounded-xl p-4 print:border-0 print:p-0">
-        {items.map((item) => {
-          const v = values[item] || { checked: false, note: "" };
-          return (
-            <div key={item} className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={v.checked}
-                onChange={(e) => onChangeItem(item, { ...v, checked: e.target.checked })}
-                className="w-4 h-4 rounded border-gray-300 text-zinc-950 focus:ring-zinc-950/20"
-              />
-              <span className="text-gray-600 w-40 shrink-0">{item}</span>
-              <input
-                value={v.note}
-                onChange={(e) => onChangeItem(item, { ...v, note: e.target.value })}
-                placeholder="Observación…"
-                className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-950/10 print:border-0 print:border-b print:rounded-none"
-              />
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function PlanillaA({ budget, planilla, onSave }) {
-  const [values, setValues] = useState(() => planilla || {});
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => { setValues(planilla || {}); }, [planilla]);
-
-  const updateSection = (sectionKey, item, value) => {
-    setValues((prev) => ({ ...prev, [sectionKey]: { ...(prev[sectionKey] || {}), [item]: value } }));
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    await onSave(values);
-    setSaving(false);
-  };
-
-  return (
-    <div>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 no-print">
-        <p className="text-xs text-gray-400">Los cambios no se guardan solos: usá "Guardar" antes de imprimir si hiciste modificaciones.</p>
-        <div className="flex gap-2">
-          <GhostButton icon={Save} onClick={handleSave}>{saving ? "Guardando…" : "Guardar"}</GhostButton>
-          <PrimaryButton icon={Printer} onClick={() => printPlanilla({ tipo: "A", budget })}>Imprimir / Guardar PDF</PrimaryButton>
-        </div>
-      </div>
-
-      <div id="printable-planilla" className="print-area bg-white border border-gray-200 rounded-2xl p-5 print:border-0 print:p-0">
-        <h3 className="font-display text-xl text-zinc-950 mb-1">Planilla A — Herramientas y Logística General</h3>
-        <PlanillaHeader budget={budget} />
-
-        {PLANILLA_A_NUMBER_SECTIONS.map((section) => (
-          <PlanillaNumberGrid
-            key={section.key}
-            title={section.title}
-            items={section.items}
-            values={values[section.key] || {}}
-            onChangeItem={(item, v) => updateSection(section.key, item, v)}
-          />
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-2 border border-gray-200 rounded-xl p-4 print:border-0 print:p-0">
+        {items.map((item, index) => (
+          <label key={index} className="flex items-center justify-between gap-2 text-sm">
+            <span className="text-gray-600">
+              {item.label} <span className="text-gray-400">· {item.marca}</span>
+            </span>
+            <input
+              type="number"
+              min="0"
+              value={values[index] ?? ""}
+              onChange={(e) => onChangeItem(index, e.target.value)}
+              className="w-16 rounded border border-gray-300 px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-zinc-950/10 print:border-0 print:border-b print:rounded-none"
+            />
+          </label>
         ))}
-
-        <PlanillaChecklist
-          title={PLANILLA_A_CHECKLIST_SECTION.title}
-          items={PLANILLA_A_CHECKLIST_SECTION.items}
-          values={values[PLANILLA_A_CHECKLIST_SECTION.key] || {}}
-          onChangeItem={(item, v) => updateSection(PLANILLA_A_CHECKLIST_SECTION.key, item, v)}
-        />
       </div>
     </div>
   );
 }
 
-function PlanillaTable({ title, columns, items, values, onChangeCell }) {
+// Renglones en blanco para completar a mano (así es en el documento
+// original: cada palabra con una línea de puntos al lado).
+function PlanillaLineItems({ title, items, values, onChangeItem }) {
+  return (
+    <div className="mb-6">
+      <h4 className="text-sm font-medium text-zinc-950 mb-2">{title}</h4>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 border border-gray-200 rounded-xl p-4 print:border-0 print:p-0">
+        {items.map((item) => (
+          <div key={item} className="flex items-center gap-2 text-sm">
+            <span className="text-gray-600 w-40 shrink-0">{item}</span>
+            <input
+              value={values[item] || ""}
+              onChange={(e) => onChangeItem(item, e.target.value)}
+              className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-950/10 print:border-0 print:border-b print:rounded-none"
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PlanillaTable({ title, columns, items, values, onChangeCell, showIndex = true }) {
   return (
     <div className="mb-6">
       <h4 className="text-sm font-medium text-zinc-950 mb-2">{title}</h4>
@@ -1491,7 +1482,7 @@ function PlanillaTable({ title, columns, items, values, onChangeCell }) {
         <table className="w-full text-xs">
           <thead>
             <tr className="text-left text-gray-400 uppercase tracking-wide border-b border-gray-100">
-              <th className="py-2 px-2 w-8">N°</th>
+              {showIndex && <th className="py-2 px-2 w-8">N°</th>}
               <th className="py-2 px-2">Producto</th>
               {columns.map((col) => (
                 <th key={col.key} className="py-2 px-2">{col.label}</th>
@@ -1503,7 +1494,7 @@ function PlanillaTable({ title, columns, items, values, onChangeCell }) {
               const row = values[item] || {};
               return (
                 <tr key={item} className="border-b border-gray-50">
-                  <td className="py-1.5 px-2 text-gray-400">{index + 1}</td>
+                  {showIndex && <td className="py-1.5 px-2 text-gray-400">{index + 1}</td>}
                   <td className="py-1.5 px-2 font-medium text-zinc-950">{item}</td>
                   {columns.map((col) => (
                     <td key={col.key} className="py-1.5 px-2">
@@ -1524,6 +1515,72 @@ function PlanillaTable({ title, columns, items, values, onChangeCell }) {
   );
 }
 
+function PlanillaSaveBar({ onSave, saving, onPrint }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 mb-4 no-print">
+      <p className="text-xs text-gray-400">Los cambios no se guardan solos: usá "Guardar" antes de imprimir si hiciste modificaciones.</p>
+      <div className="flex gap-2">
+        <GhostButton icon={Save} onClick={onSave}>{saving ? "Guardando…" : "Guardar"}</GhostButton>
+        <PrimaryButton icon={Printer} onClick={onPrint}>Imprimir / Guardar PDF</PrimaryButton>
+      </div>
+    </div>
+  );
+}
+
+function PlanillaA({ budget, planilla, onSave }) {
+  const [values, setValues] = useState(() => planilla || {});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { setValues(planilla || {}); }, [planilla]);
+
+  const updateSection = (sectionKey, item, value) => {
+    setValues((prev) => ({ ...prev, [sectionKey]: { ...(prev[sectionKey] || {}), [item]: value } }));
+  };
+  const updateCheck = (key, value) => {
+    setValues((prev) => ({ ...prev, headerChecks: { ...(prev.headerChecks || {}), [key]: value } }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    await onSave(values);
+    setSaving(false);
+  };
+
+  return (
+    <div>
+      <PlanillaSaveBar onSave={handleSave} saving={saving} onPrint={() => printPlanilla({ tipo: "A", budget })} />
+
+      <div id="printable-planilla" className="print-area bg-white border border-gray-200 rounded-2xl p-5 print:border-0 print:p-0">
+        <h3 className="font-display text-xl text-zinc-950 mb-1">DrunkCoq / Logística — Planilla A</h3>
+        <p className="text-xs text-gray-400 mb-4">Herramientas y logística general</p>
+        <PlanillaHeader
+          budget={budget}
+          checks={values.headerChecks || {}}
+          headerChecks={PLANILLA_A_HEADER_CHECKS}
+          onChangeCheck={updateCheck}
+        />
+
+        {PLANILLA_A_NUMBER_SECTIONS.map((section) => (
+          <PlanillaNumberGrid
+            key={section.key}
+            title={section.title}
+            items={section.items}
+            values={values[section.key] || {}}
+            onChangeItem={(item, v) => updateSection(section.key, item, v)}
+          />
+        ))}
+
+        <PlanillaLineItems
+          title={PLANILLA_A_LINE_SECTION.title}
+          items={PLANILLA_A_LINE_SECTION.items}
+          values={values[PLANILLA_A_LINE_SECTION.key] || {}}
+          onChangeItem={(item, v) => updateSection(PLANILLA_A_LINE_SECTION.key, item, v)}
+        />
+      </div>
+    </div>
+  );
+}
+
 function PlanillaB({ budget, planilla, onSave }) {
   const [values, setValues] = useState(() => planilla || {});
   const [saving, setSaving] = useState(false);
@@ -1536,6 +1593,12 @@ function PlanillaB({ budget, planilla, onSave }) {
       [sectionKey]: { ...(prev[sectionKey] || {}), [item]: { ...((prev[sectionKey] || {})[item] || {}), [colKey]: value } },
     }));
   };
+  const updateSimple = (sectionKey, item, value) => {
+    setValues((prev) => ({ ...prev, [sectionKey]: { ...(prev[sectionKey] || {}), [item]: value } }));
+  };
+  const updateCheck = (key, value) => {
+    setValues((prev) => ({ ...prev, headerChecks: { ...(prev.headerChecks || {}), [key]: value } }));
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -1545,17 +1608,17 @@ function PlanillaB({ budget, planilla, onSave }) {
 
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 no-print">
-        <p className="text-xs text-gray-400">Los cambios no se guardan solos: usá "Guardar" antes de imprimir si hiciste modificaciones.</p>
-        <div className="flex gap-2">
-          <GhostButton icon={Save} onClick={handleSave}>{saving ? "Guardando…" : "Guardar"}</GhostButton>
-          <PrimaryButton icon={Printer} onClick={() => printPlanilla({ tipo: "B", budget })}>Imprimir / Guardar PDF</PrimaryButton>
-        </div>
-      </div>
+      <PlanillaSaveBar onSave={handleSave} saving={saving} onPrint={() => printPlanilla({ tipo: "B", budget })} />
 
       <div id="printable-planilla" className="print-area bg-white border border-gray-200 rounded-2xl p-5 print:border-0 print:p-0">
-        <h3 className="font-display text-xl text-zinc-950 mb-1">Planilla B — Mercadería y Consumos</h3>
-        <PlanillaHeader budget={budget} />
+        <h3 className="font-display text-xl text-zinc-950 mb-1">DrunkCoq / Logística — Planilla B</h3>
+        <p className="text-xs text-gray-400 mb-4">Mercadería y consumos</p>
+        <PlanillaHeader
+          budget={budget}
+          checks={values.headerChecks || {}}
+          headerChecks={PLANILLA_B_HEADER_CHECKS}
+          onChangeCheck={updateCheck}
+        />
 
         {PLANILLA_B_TABLE_SECTIONS.map((section) => (
           <PlanillaTable
@@ -1565,6 +1628,38 @@ function PlanillaB({ budget, planilla, onSave }) {
             items={section.items}
             values={values[section.key] || {}}
             onChangeCell={(item, colKey, v) => updateCell(section.key, item, colKey, v)}
+          />
+        ))}
+
+        {PLANILLA_B_LABELED_SECTIONS.map((section) => (
+          <PlanillaLabeledGrid
+            key={section.key}
+            title={section.title}
+            items={section.items}
+            values={values[section.key] || {}}
+            onChangeItem={(index, v) => updateSimple(section.key, index, v)}
+          />
+        ))}
+
+        {PLANILLA_B_NUMBER_SECTIONS.map((section) => (
+          <PlanillaNumberGrid
+            key={section.key}
+            title={section.title}
+            items={section.items}
+            values={values[section.key] || {}}
+            onChangeItem={(item, v) => updateSimple(section.key, item, v)}
+          />
+        ))}
+
+        {PLANILLA_B_STOCK_TABLE_SECTIONS.map((section) => (
+          <PlanillaTable
+            key={section.key}
+            title={section.title}
+            columns={section.columns}
+            items={section.items}
+            values={values[section.key] || {}}
+            onChangeCell={(item, colKey, v) => updateCell(section.key, item, colKey, v)}
+            showIndex={false}
           />
         ))}
       </div>

@@ -1,6 +1,24 @@
-// Plantillas de las planillas imprimibles. Son listas fijas: no se guardan en
-// Firestore, solo definen qué campos mostrar. Lo que sí se guarda en Firestore
-// son los VALORES que carga el usuario para cada item, asociados a un presupuesto.
+// Plantillas de las planillas imprimibles, basadas en los documentos Word
+// reales que usa DrunkCoq ("Logistica Herramientas" y "Logistica Mercadería").
+// Son listas fijas: no se guardan en Firestore, solo definen qué campos
+// mostrar. Lo que sí se guarda en Firestore son los VALORES que carga el
+// usuario para cada item, asociados a un presupuesto.
+
+// Casilleros del encabezado: E = Entrega, A = Armado, D = Devolución.
+// La planilla de Mercadería no tiene "D" porque lo que se entrega se consume,
+// no se devuelve.
+export const PLANILLA_A_HEADER_CHECKS = [
+  { key: "E", label: "Entrega" },
+  { key: "A", label: "Armado" },
+  { key: "D", label: "Devolución" },
+];
+
+export const PLANILLA_B_HEADER_CHECKS = [
+  { key: "E", label: "Entrega" },
+  { key: "A", label: "Armado" },
+];
+
+/* ----------------------------- PLANILLA A ----------------------------- */
 
 export const PLANILLA_A_NUMBER_SECTIONS = [
   {
@@ -39,15 +57,20 @@ export const PLANILLA_A_NUMBER_SECTIONS = [
   },
 ];
 
-export const PLANILLA_A_CHECKLIST_SECTION = {
+// En el documento original esto es una lista de renglones en blanco para
+// completar a mano (una línea de puntos después de cada palabra), no
+// casilleros para tildar. Por eso acá es un campo de texto libre por ítem.
+export const PLANILLA_A_LINE_SECTION = {
   key: "observaciones",
-  title: "Checklist de observaciones",
+  title: "Observaciones",
   items: [
     "Cartas de tragos", "Tarjetas", "Marco/QR", "Descartables", "Sorbetes",
     "Vasos Hexagonales", "Copas", "Vasos Gota", "Frascos", "Luces",
     "Racks", "Bar Mat", "Estirillas", "Hielo Rulo", "Picado",
   ],
 };
+
+/* ----------------------------- PLANILLA B ----------------------------- */
 
 export const PLANILLA_B_BEBIDAS = {
   key: "bebidas",
@@ -66,33 +89,81 @@ export const PLANILLA_B_BEBIDAS = {
   ],
 };
 
-export const PLANILLA_B_JUGOS = {
-  key: "jugos",
-  title: "Jugos, pulpas, almíbares y gaseosas",
-  columns: [
-    { key: "marca", label: "Marca" },
-    { key: "cantidad", label: "Cantidad" },
-  ],
+// Estas dos secciones tienen una "marca" fija impresa junto al nombre
+// (parte de la plantilla, no la carga el usuario), y solo la cantidad se
+// completa. Como puede haber dos ítems con el mismo nombre+marca (pasa en
+// el documento real, ej. "Jugo Manzana / Tang" aparece dos veces), cada
+// ítem se identifica por su POSICIÓN en la lista, no por el nombre.
+export const PLANILLA_B_JUGOS_PULPAS = {
+  key: "jugosPulpas",
+  title: "Jugos y pulpas",
   items: [
-    "Jugo Limón Botella", "Jugo Limón Tang", "Jugo Manzana Tang", "Jugo Mandarina Clight",
-    "Pulpa Frutilla Bahía", "Pulpa Maracuyá Bahía", "Pulpa Ananá lata Bahía", "Té Jengibre",
-    "Almíbar", "Almíbar Peperina", "Almíbar Simple", "Almíbar Romero", "Pomelo Roció",
-    "Tónica Roció", "Soda Druetta", "Cola Coca C", "Jugo Preparado Limón", "Jugo Preparado Naranja",
+    { label: "Jugo Limón", marca: "Botella" },
+    { label: "Jugo Limón", marca: "Tang" },
+    { label: "Jugo Manzana", marca: "Tang" },
+    { label: "Jugo Manzana", marca: "Tang" },
+    { label: "Jugo Mandarina", marca: "Clight" },
+    { label: "Pulpa de Frutilla", marca: "Bahía" },
+    { label: "Pulpa Maracuyá", marca: "Bahía" },
+    { label: "Pulpa Ananá lata", marca: "Bahía" },
   ],
 };
 
+export const PLANILLA_B_ALMIBARES = {
+  key: "almibares",
+  title: "Almíbares",
+  items: ["Té Jengibre", "Almíbar", "Almíbar Peperina", "Almíbar Simple", "Almíbar Romero"],
+};
+
+export const PLANILLA_B_GASEOSAS = {
+  key: "gaseosas",
+  title: "Gaseosas",
+  items: [
+    { label: "Pomelo", marca: "Roció" },
+    { label: "Tónica", marca: "Roció" },
+    { label: "Soda", marca: "Druetta" },
+    { label: "Cola", marca: "Coca C" },
+  ],
+};
+
+export const PLANILLA_B_JUGO_PREPARADO = {
+  key: "jugoPreparado",
+  title: "Jugo preparado",
+  items: ["Limón", "Naranja"],
+};
+
+// Tablas con cantidad inicial/final, tal como en el documento original.
 export const PLANILLA_B_FRUTAS = {
-  key: "frutasVarios",
-  title: "Frutas, cervezas y varios",
+  key: "frutas",
+  title: "Frutas",
   columns: [
     { key: "inicial", label: "Cantidad inicial" },
     { key: "final", label: "Cantidad final" },
   ],
-  items: [
-    "Hierba Buena", "Pomelos", "Pepinos", "Frutillas", "Limones", "Limas", "Piñas",
-    "Naranjas", "Manzanas", "Schneider lata", "Corona botella", "Stella Artois",
-    "Vino caja x6", "Agua 500 P", "Agua 1 L P", "Speed Pack",
-  ],
+  items: ["Hierba Buena", "Pomelos", "Pepinos", "Frutillas", "Limones", "Limas", "Piñas", "Naranjas", "Manzanas"],
 };
 
-export const PLANILLA_B_TABLE_SECTIONS = [PLANILLA_B_BEBIDAS, PLANILLA_B_JUGOS, PLANILLA_B_FRUTAS];
+export const PLANILLA_B_CERVEZAS = {
+  key: "cervezas",
+  title: "Cervezas",
+  columns: [
+    { key: "inicial", label: "Cantidad inicial" },
+    { key: "final", label: "Cantidad final" },
+  ],
+  items: ["Schneider lata", "Corona botella", "Stella Artois"],
+};
+
+export const PLANILLA_B_VARIOS = {
+  key: "varios",
+  title: "Varios",
+  columns: [
+    { key: "inicial", label: "Cantidad inicial" },
+    { key: "final", label: "Cantidad final" },
+  ],
+  items: ["Vino caja x6", "Agua 500 P", "Agua 1 L P", "Speed Pack"],
+};
+
+export const PLANILLA_B_NUMBER_SECTIONS = [PLANILLA_B_ALMIBARES, PLANILLA_B_JUGO_PREPARADO];
+export const PLANILLA_B_LABELED_SECTIONS = [PLANILLA_B_JUGOS_PULPAS, PLANILLA_B_GASEOSAS];
+export const PLANILLA_B_TABLE_SECTIONS = [PLANILLA_B_BEBIDAS];
+export const PLANILLA_B_STOCK_TABLE_SECTIONS = [PLANILLA_B_FRUTAS, PLANILLA_B_CERVEZAS, PLANILLA_B_VARIOS];
