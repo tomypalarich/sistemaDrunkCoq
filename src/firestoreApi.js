@@ -12,11 +12,13 @@ import {
   writeBatch,
   getDocs,
   setDoc,
+  increment,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { mockProducts, mockProviders, mockBudgets, mockMovements, DEFAULT_STOCK_CATEGORIES, DEFAULT_PROVIDER_CATEGORIES } from "./mockData";
 
 const mapDocs = (snapshot) => snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+const todayISO = () => new Date().toISOString().slice(0, 10);
 
 /* ----------------------------- SUSCRIPCIONES EN TIEMPO REAL ----------------------------- */
 
@@ -36,7 +38,7 @@ export function subscribeBudgets(onChange) {
 }
 
 export function subscribeMovements(onChange) {
-  const q = query(collection(db, "movements"), orderBy("createdAt", "desc"), limit(8));
+  const q = query(collection(db, "movements"), orderBy("createdAt", "desc"), limit(20));
   return onSnapshot(q, (snap) => onChange(mapDocs(snap)));
 }
 
@@ -50,32 +52,39 @@ export function subscribeProviderCategories(onChange) {
   return onSnapshot(q, (snap) => onChange(mapDocs(snap)));
 }
 
+// Trae TODAS las planillas (no una sola). Se usa en Centro de Costos para
+// sumar las mermas/faltantes de todos los retornos ya procesados.
+export function subscribePlanillas(onChange) {
+  const q = query(collection(db, "planillas"));
+  return onSnapshot(q, (snap) => onChange(mapDocs(snap)));
+}
+
 /* ----------------------------- PRODUCTOS / STOCK ----------------------------- */
 
-export async function logMovement(text) {
-  await addDoc(collection(db, "movements"), { text, createdAt: serverTimestamp() });
+export async function logMovement(text, type = "ajuste", extra = {}) {
+  await addDoc(collection(db, "movements"), { text, type, createdAt: serverTimestamp(), ...extra });
 }
 
 export async function addProduct(data) {
-  await addDoc(collection(db, "products"), { ...data, createdAt: serverTimestamp() });
-  await logMovement(`Se agregó nuevo producto "${data.name}" con ${data.stock} unidades`);
+  await addDoc(collection(db, "products"), { ...data, lastEntryDate: todayISO(), createdAt: serverTimestamp() });
+  await logMovement(`Se agregó nuevo producto "${data.name}" con ${data.stock} unidades`, "ingreso");
 }
 
 export async function updateProduct(id, data) {
-  await updateDoc(doc(db, "products", id), data);
-  await logMovement(`Se actualizó "${data.name}" — stock ahora en ${data.stock}`);
+  await updateDoc(doc(db, "products", id), { ...data, lastEntryDate: todayISO() });
+  await logMovement(`Se actualizó "${data.name}" — stock ahora en ${data.stock}`, "ingreso");
 }
 
 export async function deleteProduct(product) {
   await deleteDoc(doc(db, "products", product.id));
-  await logMovement(`Se eliminó el producto "${product.name}"`);
+  await logMovement(`Se eliminó el producto "${product.name}"`, "eliminacion");
 }
 
 export async function deleteManyProducts(products) {
   const batch = writeBatch(db);
   products.forEach((p) => batch.delete(doc(db, "products", p.id)));
   await batch.commit();
-  await logMovement(`Se eliminaron ${products.length} productos del stock`);
+  await logMovement(`Se eliminaron ${products.length} productos del stock`, "eliminacion");
 }
 
 /* ----------------------------- CATEGORÍAS ----------------------------- */
@@ -147,6 +156,44 @@ export async function savePlanilla(planillaId, data) {
   await setDoc(doc(db, "planillas", planillaId), { ...data, updatedAt: serverTimestamp() }, { merge: true });
 }
 
+// Procesa el "retorno" de un evento: resta del Stock lo realmente consumido/roto,
+// deja un movimiento con tipo "volvio" por cada producto afectado, y guarda el
+// detalle (para Centro de Costos) dentro del propio documento de la planilla.
+export async function processStockReturn({ planillaId, budgetId, budgetLabel, planillaType, items }) {
+  const batch = writeBatch(db);
+
+  for (const item of items) {
+    if (!item.productId || item.consumed <= 0) continue;
+    batch.update(doc(db, "products", item.productId), { stock: increment(-item.consumed) });
+  }
+  await batch.commit();
+
+  for (const item of items) {
+    if (!item.productId || item.consumed <= 0) continue;
+    await logMovement(
+      `Volvió de "${budgetLabel}": se descontaron ${item.consumed} de "${item.productName}"`,
+      "volvio",
+      { productId: item.productId, budgetId }
+    );
+  }
+
+  const totalCost = items.reduce((sum, i) => sum + (i.consumed > 0 ? i.consumed * (Number(i.costPrice) || 0) : 0), 0);
+
+  await setDoc(
+    doc(db, "planillas", planillaId),
+    {
+      retorno: {
+        budgetId,
+        planillaType,
+        items,
+        totalCost,
+        processedAt: serverTimestamp(),
+      },
+    },
+    { merge: true }
+  );
+}
+
 /* ----------------------------- CARGA DE DATOS DE EJEMPLO ----------------------------- */
 
 export async function isDatabaseEmpty() {
@@ -178,6 +225,7 @@ export async function seedDatabase() {
     await addDoc(collection(db, "products"), {
       ...product,
       providerId: providerIdMap[providerMockId] || "",
+      lastEntryDate: todayISO(),
       createdAt: serverTimestamp(),
     });
   }
@@ -192,6 +240,6 @@ export async function seedDatabase() {
   }
 
   for (const text of mockMovements) {
-    await addDoc(collection(db, "movements"), { text, createdAt: serverTimestamp() });
+    await addDoc(collection(db, "movements"), { text, type: "ingreso", createdAt: serverTimestamp() });
   }
 }
