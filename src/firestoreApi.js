@@ -159,7 +159,12 @@ export async function savePlanilla(planillaId, data) {
 // Procesa el "retorno" de un evento: resta del Stock lo realmente consumido/roto,
 // deja un movimiento con tipo "volvio" por cada producto afectado, y guarda el
 // detalle (para Centro de Costos) dentro del propio documento de la planilla.
-export async function processStockReturn({ planillaId, budgetId, budgetLabel, planillaType, items }) {
+// Procesa el "cierre" de un evento: resta del Stock lo realmente
+// faltante/consumido/roto, deja un movimiento con tipo "consumo" por cada
+// producto afectado, y guarda el detalle + gastos operativos (personal,
+// vehículos) dentro del propio documento de la planilla, para que Centro de
+// Costos pueda calcular el margen neto del evento.
+export async function processStockConsumption({ planillaId, budgetId, budgetLabel, draft, items }) {
   const batch = writeBatch(db);
 
   for (const item of items) {
@@ -171,21 +176,30 @@ export async function processStockReturn({ planillaId, budgetId, budgetLabel, pl
   for (const item of items) {
     if (!item.productId || item.consumed <= 0) continue;
     await logMovement(
-      `Volvió de "${budgetLabel}": se descontaron ${item.consumed} de "${item.productName}"`,
-      "volvio",
+      `Consumido en evento "${budgetLabel}": se descontaron ${item.consumed} de "${item.productName}"`,
+      "consumo",
       { productId: item.productId, budgetId }
     );
   }
 
-  const totalCost = items.reduce((sum, i) => sum + (i.consumed > 0 ? i.consumed * (Number(i.costPrice) || 0) : 0), 0);
+  const stockCost = items.filter((i) => !i.isCristaleria).reduce((sum, i) => sum + i.consumed * (Number(i.costPrice) || 0), 0);
+  const cristaleriaCost = items.filter((i) => i.isCristaleria).reduce((sum, i) => sum + i.consumed * (Number(i.costPrice) || 0), 0);
+  const personalCost = Number(draft?.personal?.totalCost) || 0;
+  const vehiculosCost = (draft?.vehiculos || []).reduce((sum, v) => sum + (Number(v.fuelCost) || 0), 0);
+  const totalCost = stockCost + cristaleriaCost + personalCost + vehiculosCost;
 
   await setDoc(
     doc(db, "planillas", planillaId),
     {
-      retorno: {
+      ...draft,
+      consumo: {
         budgetId,
-        planillaType,
+        organizerProviderId: draft?.organizerProviderId || "",
         items,
+        stockCost,
+        cristaleriaCost,
+        personalCost,
+        vehiculosCost,
         totalCost,
         processedAt: serverTimestamp(),
       },

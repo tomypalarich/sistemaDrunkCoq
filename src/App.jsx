@@ -12,14 +12,12 @@ import {
   addProvider, updateProvider, deleteProvider,
   addBudget, updateBudget, deleteBudget, deleteManyBudgets,
   addStockCategory, addProviderCategory,
-  subscribePlanilla, subscribePlanillas, savePlanilla, processStockReturn,
+  subscribePlanilla, subscribePlanillas, savePlanilla, processStockConsumption,
   seedDatabase,
 } from "./firestoreApi";
 import { TIPOS_EVENTO, ESTADOS } from "./mockData";
 import {
-  PLANILLA_A_NUMBER_SECTIONS, PLANILLA_A_LINE_SECTION, PLANILLA_A_HEADER_CHECKS,
-  PLANILLA_B_TABLE_SECTIONS, PLANILLA_B_NUMBER_SECTIONS, PLANILLA_B_LABELED_SECTIONS,
-  PLANILLA_B_STOCK_TABLE_SECTIONS, PLANILLA_B_HEADER_CHECKS,
+  PLANILLA_BEBIDAS, PLANILLA_JUGOS, PLANILLA_FRUTAS_VARIOS, PLANILLA_CRISTALERIA,
 } from "./planillaTemplates";
 
 /* ----------------------------- HELPERS ----------------------------- */
@@ -87,7 +85,7 @@ const movementTypeLabels = {
   ingreso: { label: "Ingreso", className: "bg-gray-100 text-gray-500" },
   ajuste: { label: "Ajuste", className: "bg-gray-100 text-gray-500" },
   eliminacion: { label: "Eliminado", className: "bg-red-50 text-red-700" },
-  volvio: { label: "Volvió", className: "bg-emerald-50 text-emerald-700" },
+  consumo: { label: "Consumido", className: "bg-amber-50 text-amber-700" },
 };
 
 function MovementTypeBadge({ type }) {
@@ -1147,40 +1145,64 @@ function ComparisonBars({ label1, value1, label2, value2 }) {
   );
 }
 
-function CostCenterSection({ products, budgets, planillas, categories, loading }) {
-  const [categoryFilter, setCategoryFilter] = useState("Todas");
+function CostCenterSection({ products, budgets, planillas, providers, categories, loading }) {
   const [scope, setScope] = useState("anio"); // 'anio' | 'mes' | 'evento'
   const [selectedBudgetId, setSelectedBudgetId] = useState("");
+  const [localityFilter, setLocalityFilter] = useState("Todas");
+  const [eventTypeFilter, setEventTypeFilter] = useState("Todos");
+  const [organizerFilter, setOrganizerFilter] = useState("Todos");
 
   const numbers = useSequentialNumbers(budgets);
   const now = new Date();
   const currentYear = String(now.getFullYear());
   const currentMonth = `${currentYear}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-  const counts = ESTADOS.reduce((acc, s) => ({ ...acc, [s]: budgets.filter((b) => b.status === s).length }), {});
+  const localities = useMemo(() => [...new Set(budgets.map((b) => b.locality).filter(Boolean))].sort(), [budgets]);
 
-  const stockForCategory = categoryFilter === "Todas" ? products : products.filter((p) => p.category === categoryFilter);
-  const stockValueCost = stockForCategory.reduce((sum, p) => sum + (Number(p.costPrice) || 0) * (Number(p.stock) || 0), 0);
-  const stockValueSale = stockForCategory.reduce((sum, p) => sum + (Number(p.salePrice) || 0) * (Number(p.stock) || 0), 0);
+  const stockValueCost = products.reduce((sum, p) => sum + (Number(p.costPrice) || 0) * (Number(p.stock) || 0), 0);
+  const stockValueSale = products.reduce((sum, p) => sum + (Number(p.salePrice) || 0) * (Number(p.stock) || 0), 0);
 
-  // Presupuestos dentro del rango elegido (año actual / mes actual / un evento puntual)
+  // Presupuestos que pasan TODOS los filtros: rango de tiempo + localidad + tipo de evento + organizador.
   const scopedBudgets = useMemo(() => {
-    if (scope === "evento") return budgets.filter((b) => b.id === selectedBudgetId);
-    if (scope === "mes") return budgets.filter((b) => (b.date || "").startsWith(currentMonth));
-    return budgets.filter((b) => (b.date || "").startsWith(currentYear));
-  }, [budgets, scope, selectedBudgetId, currentMonth, currentYear]);
+    let list = budgets;
+    if (scope === "evento") list = list.filter((b) => b.id === selectedBudgetId);
+    else if (scope === "mes") list = list.filter((b) => (b.date || "").startsWith(currentMonth));
+    else list = list.filter((b) => (b.date || "").startsWith(currentYear));
+
+    if (localityFilter !== "Todas") list = list.filter((b) => b.locality === localityFilter);
+    if (eventTypeFilter !== "Todos") list = list.filter((b) => b.eventType === eventTypeFilter);
+    if (organizerFilter !== "Todos") list = list.filter((b) => (b.providerIds || []).includes(organizerFilter));
+    return list;
+  }, [budgets, scope, selectedBudgetId, currentMonth, currentYear, localityFilter, eventTypeFilter, organizerFilter]);
 
   const approvedScoped = scopedBudgets.filter((b) => b.status === "Aprobado");
   const facturacionTotal = approvedScoped.reduce((sum, b) => sum + budgetTotal(b), 0);
 
-  // Mermas/faltantes: suma de los retornos ya procesados (planillas con .retorno)
-  // que pertenecen a alguno de los presupuestos dentro del rango elegido.
+  // Las planillas se guardan con el mismo id que su presupuesto, así que
+  // "planilla.id === presupuesto.id" es cómo los relacionamos.
   const scopedBudgetIds = new Set(scopedBudgets.map((b) => b.id));
-  const mermasTotal = planillas
-    .filter((p) => p.retorno && scopedBudgetIds.has(p.retorno.budgetId))
-    .reduce((sum, p) => sum + (Number(p.retorno.totalCost) || 0), 0);
+  const scopedConsumos = planillas.filter((p) => p.consumo && scopedBudgetIds.has(p.id)).map((p) => p.consumo);
 
-  const balance = facturacionTotal - mermasTotal;
+  const gastosStock = scopedConsumos.reduce((sum, c) => sum + (Number(c.stockCost) || 0), 0);
+  const gastosCristaleria = scopedConsumos.reduce((sum, c) => sum + (Number(c.cristaleriaCost) || 0), 0);
+  const gastosPersonal = scopedConsumos.reduce((sum, c) => sum + (Number(c.personalCost) || 0), 0);
+  const gastosVehiculos = scopedConsumos.reduce((sum, c) => sum + (Number(c.vehiculosCost) || 0), 0);
+  const gastosTotal = gastosStock + gastosCristaleria + gastosPersonal + gastosVehiculos;
+
+  const margenNeto = facturacionTotal - gastosTotal;
+  const mermasPercent = facturacionTotal > 0 ? ((gastosStock + gastosCristaleria) / facturacionTotal) * 100 : 0;
+
+  // Ítems con mayor consumo (ranking) dentro del rango filtrado.
+  const topConsumo = useMemo(() => {
+    const totals = {};
+    scopedConsumos.forEach((c) => {
+      (c.items || []).forEach((item) => {
+        totals[item.productName] = (totals[item.productName] || 0) + (Number(item.consumed) || 0);
+      });
+    });
+    return Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  }, [scopedConsumos]);
+
   const scopeLabel = scope === "evento" ? "del evento seleccionado" : scope === "mes" ? "de este mes" : "de este año";
 
   return (
@@ -1191,75 +1213,35 @@ function CostCenterSection({ products, budgets, planillas, categories, loading }
         <div className="flex justify-center py-16"><Loader2 className="w-5 h-5 text-gray-300 animate-spin" /></div>
       ) : (
         <div className="space-y-6">
-          {/* Análisis de presupuestos */}
-          <div className="bg-white border border-gray-200 rounded-2xl p-5">
+          {/* Filtros cruzados */}
+          <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5">
             <div className="flex items-center gap-2 mb-4">
-              <FileText className="w-4 h-4 text-gray-400" />
-              <h3 className="text-sm font-medium text-zinc-950">Análisis de presupuestos</h3>
+              <Search className="w-4 h-4 text-gray-400" />
+              <h3 className="text-sm font-medium text-zinc-950">Filtros</h3>
             </div>
-            <div className="flex flex-wrap gap-3">
-              <StatCard label="Pendientes" value={counts.Pendiente} />
-              <StatCard label="Aprobados" value={counts.Aprobado} tone="success" />
-              <StatCard label="Rechazados" value={counts.Rechazado} tone="alert" />
-              <StatCard label="Finalizados" value={counts.Finalizado} />
-            </div>
-          </div>
-
-          {/* Análisis de stock */}
-          <div className="bg-white border border-gray-200 rounded-2xl p-5">
-            <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-              <div className="flex items-center gap-2">
-                <Package className="w-4 h-4 text-gray-400" />
-                <h3 className="text-sm font-medium text-zinc-950">Análisis de stock</h3>
-              </div>
-              <Select
-                value={categoryFilter}
-                onChange={setCategoryFilter}
-                options={["Todas", ...categories.map((c) => c.name)].map((c) => <option key={c} value={c}>{c}</option>)}
-              />
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <StatCard label="Valor del inventario (costo)" value={formatMoney(stockValueCost)} />
-              <StatCard label="Valor del inventario (venta)" value={formatMoney(stockValueSale)} tone="success" />
-              <StatCard label="Productos" value={stockForCategory.length} />
-            </div>
-          </div>
-
-          {/* Análisis financiero */}
-          <div className="bg-white border border-gray-200 rounded-2xl p-5">
-            <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-              <div className="flex items-center gap-2">
-                <Wallet className="w-4 h-4 text-gray-400" />
-                <h3 className="text-sm font-medium text-zinc-950">Análisis financiero y de mermas</h3>
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={() => setScope("anio")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${scope === "anio" ? "bg-zinc-950 text-white border-zinc-950" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}
-                >
-                  Este año
-                </button>
-                <button
-                  onClick={() => setScope("mes")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${scope === "mes" ? "bg-zinc-950 text-white border-zinc-950" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}
-                >
-                  Este mes
-                </button>
-                <button
-                  onClick={() => setScope("evento")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${scope === "evento" ? "bg-zinc-950 text-white border-zinc-950" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}
-                >
-                  Por evento
-                </button>
-              </div>
-            </div>
-
-            {scope === "evento" && (
-              <div className="mb-5">
+            <div className="flex flex-wrap gap-3 mb-4">
+              <button
+                onClick={() => setScope("anio")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${scope === "anio" ? "bg-zinc-950 text-white border-zinc-950" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}
+              >
+                Este año
+              </button>
+              <button
+                onClick={() => setScope("mes")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${scope === "mes" ? "bg-zinc-950 text-white border-zinc-950" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}
+              >
+                Este mes
+              </button>
+              <button
+                onClick={() => setScope("evento")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${scope === "evento" ? "bg-zinc-950 text-white border-zinc-950" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}
+              >
+                Por evento
+              </button>
+              {scope === "evento" && (
                 <Select
                   value={selectedBudgetId}
                   onChange={setSelectedBudgetId}
-                  className="w-full sm:w-auto"
                   options={[
                     <option key="" value="">Seleccionar presupuesto…</option>,
                     ...budgets.map((b) => (
@@ -1269,26 +1251,101 @@ function CostCenterSection({ products, budgets, planillas, categories, loading }
                     )),
                   ]}
                 />
-              </div>
-            )}
+              )}
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Select
+                value={localityFilter}
+                onChange={setLocalityFilter}
+                options={["Todas", ...localities].map((l) => <option key={l} value={l}>{l}</option>)}
+              />
+              <Select
+                value={eventTypeFilter}
+                onChange={setEventTypeFilter}
+                options={["Todos", ...TIPOS_EVENTO].map((t) => <option key={t} value={t}>{t}</option>)}
+              />
+              <Select
+                value={organizerFilter}
+                onChange={setOrganizerFilter}
+                options={[
+                  <option key="Todos" value="Todos">Todos los organizadores</option>,
+                  ...providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>),
+                ]}
+              />
+            </div>
+          </div>
 
-            <p className="text-xs text-gray-400 mb-5">
-              Facturación de presupuestos aprobados y mermas/faltantes (según los retornos ya procesados en Planillas) {scopeLabel}.
-            </p>
+          {/* Análisis de stock */}
+          <div className="bg-white border border-gray-200 rounded-2xl p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Package className="w-4 h-4 text-gray-400" />
+              <h3 className="text-sm font-medium text-zinc-950">Análisis de stock general</h3>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <StatCard label="Valor del inventario (costo)" value={formatMoney(stockValueCost)} />
+              <StatCard label="Valor del inventario (venta)" value={formatMoney(stockValueSale)} tone="success" />
+              <StatCard label="Productos" value={products.length} />
+            </div>
+          </div>
+
+          {/* Desglose de gastos */}
+          <div className="bg-white border border-gray-200 rounded-2xl p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <Wallet className="w-4 h-4 text-gray-400" />
+              <h3 className="text-sm font-medium text-zinc-950">Desglose de gastos {scopeLabel}</h3>
+            </div>
+            <p className="text-xs text-gray-400 mb-4">Basado en los cierres de evento ya procesados en Planillas.</p>
+            <div className="flex flex-wrap gap-3">
+              <StatCard label="Stock consumido" value={formatMoney(gastosStock)} />
+              <StatCard label="Cristalería rota/faltante" value={formatMoney(gastosCristaleria)} tone="alert" />
+              <StatCard label="Personal" value={formatMoney(gastosPersonal)} />
+              <StatCard label="Vehículos" value={formatMoney(gastosVehiculos)} />
+            </div>
+          </div>
+
+          {/* Margen y balance */}
+          <div className="bg-white border border-gray-200 rounded-2xl p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <TrendingUp className="w-4 h-4 text-gray-400" />
+              <h3 className="text-sm font-medium text-zinc-950">Margen neto {scopeLabel}</h3>
+            </div>
             <ComparisonBars
-              label1="Mermas / faltantes"
-              value1={mermasTotal}
+              label1="Gastos totales"
+              value1={gastosTotal}
               label2="Facturación total (aprobados)"
               value2={facturacionTotal}
             />
-            <div className="flex items-center justify-between mt-5 pt-4 border-t border-gray-100">
-              <span className="text-sm text-gray-500 flex items-center gap-1.5">
-                <TrendingUp className="w-4 h-4" /> Balance estimado
-              </span>
-              <span className={`font-display text-xl ${balance >= 0 ? "text-emerald-700" : "text-red-700"}`}>
-                {formatMoney(balance)}
+            <div className="flex flex-wrap items-center justify-between gap-3 mt-5 pt-4 border-t border-gray-100">
+              <span className="text-sm text-gray-500">Margen neto (facturación − gastos)</span>
+              <span className={`font-display text-xl ${margenNeto >= 0 ? "text-emerald-700" : "text-red-700"}`}>
+                {formatMoney(margenNeto)}
               </span>
             </div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-sm text-gray-500">% de mermas sobre facturación</span>
+              <span className="font-medium text-zinc-950">{mermasPercent.toFixed(1)}%</span>
+            </div>
+          </div>
+
+          {/* Ranking de consumo */}
+          <div className="bg-white border border-gray-200 rounded-2xl p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <BarChart3 className="w-4 h-4 text-gray-400" />
+              <h3 className="text-sm font-medium text-zinc-950">Ítems con mayor consumo {scopeLabel}</h3>
+            </div>
+            {topConsumo.length === 0 ? (
+              <p className="text-sm text-gray-400">Todavía no hay cierres de evento procesados en este rango.</p>
+            ) : (
+              <div className="space-y-2">
+                {topConsumo.map(([name, qty], i) => (
+                  <div key={name} className="flex items-center gap-3 text-sm">
+                    <span className="w-5 text-gray-400 text-xs">{i + 1}</span>
+                    <span className="flex-1 text-gray-700">{name}</span>
+                    <span className="font-medium text-zinc-950">{qty}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1447,7 +1504,7 @@ function ProvidersSection({ providers, categories, loading }) {
 
 /* ----------------------------- NAVIGATION ----------------------------- */
 
-/* ----------------------------- PLANILLAS ----------------------------- */
+/* ----------------------------- PLANILLA DE CIERRE DE EVENTO ----------------------------- */
 
 // Convierte texto libre en algo apto para nombre de archivo:
 // sin acentos, sin espacios raros, sin caracteres especiales.
@@ -1458,167 +1515,14 @@ function slugify(text) {
     .replace(/^_+|_+$/g, "");
 }
 
-function printPlanilla({ tipo, budget }) {
-  const filename = `Planilla_${tipo}_${slugify(budget?.eventType)}_${slugify(budget?.date)}`;
+function printPlanilla({ budget }) {
+  const filename = `Planilla_Consumo_${slugify(budget?.eventType)}_${slugify(budget?.date)}`;
   const prevTitle = document.title;
   document.title = filename;
   const restore = () => { document.title = prevTitle; window.removeEventListener("afterprint", restore); };
   window.addEventListener("afterprint", restore);
   window.print();
-  // Por si el navegador no dispara "afterprint" (pasa en algunos casos), restauramos igual después de un rato.
   setTimeout(restore, 2000);
-}
-
-function CheckBox({ label, checked, onChange }) {
-  return (
-    <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-      <input
-        type="checkbox"
-        checked={!!checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="w-4 h-4 rounded border-gray-300 text-zinc-950 focus:ring-zinc-950/20"
-      />
-      <span className="text-gray-600">{label}</span>
-    </label>
-  );
-}
-
-function PlanillaHeader({ budget, checks, headerChecks, onChangeCheck }) {
-  return (
-    <div className="flex flex-wrap items-end justify-between gap-4 mb-6 pb-4 border-b border-gray-200">
-      <div className="flex flex-wrap gap-6">
-        <div>
-          <p className="text-xs text-gray-400 uppercase tracking-wide">Fecha</p>
-          <p className="text-sm font-medium text-zinc-950">{formatDate(budget.date)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-gray-400 uppercase tracking-wide">Tipo de evento</p>
-          <p className="text-sm font-medium text-zinc-950">{budget.eventType}</p>
-        </div>
-        <div>
-          <p className="text-xs text-gray-400 uppercase tracking-wide">Localidad</p>
-          <p className="text-sm font-medium text-zinc-950">{budget.locality}</p>
-        </div>
-      </div>
-      <div className="flex gap-4">
-        {headerChecks.map((c) => (
-          <CheckBox key={c.key} label={c.label} checked={checks[c.key]} onChange={(v) => onChangeCheck(c.key, v)} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PlanillaNumberGrid({ title, items, values, onChangeItem }) {
-  return (
-    <div className="mb-6">
-      <h4 className="text-sm font-medium text-zinc-950 mb-2">{title}</h4>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-2 border border-gray-200 rounded-xl p-4 print:border-0 print:p-0">
-        {items.map((item) => (
-          <label key={item} className="flex items-center justify-between gap-2 text-sm">
-            <span className="text-gray-600">{item}</span>
-            <input
-              type="number"
-              min="0"
-              value={values[item] ?? ""}
-              onChange={(e) => onChangeItem(item, e.target.value)}
-              className="w-16 rounded border border-gray-300 px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-zinc-950/10 print:border-0 print:border-b print:rounded-none"
-            />
-          </label>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Sección de ítems con "marca" fija (impresa, no editable) + una cantidad
-// editable. Como el nombre+marca se puede repetir, cada ítem se identifica
-// por su posición en la lista (índice), no por el texto.
-function PlanillaLabeledGrid({ title, items, values, onChangeItem }) {
-  return (
-    <div className="mb-6">
-      <h4 className="text-sm font-medium text-zinc-950 mb-2">{title}</h4>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-2 border border-gray-200 rounded-xl p-4 print:border-0 print:p-0">
-        {items.map((item, index) => (
-          <label key={index} className="flex items-center justify-between gap-2 text-sm">
-            <span className="text-gray-600">
-              {item.label} <span className="text-gray-400">· {item.marca}</span>
-            </span>
-            <input
-              type="number"
-              min="0"
-              value={values[index] ?? ""}
-              onChange={(e) => onChangeItem(index, e.target.value)}
-              className="w-16 rounded border border-gray-300 px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-zinc-950/10 print:border-0 print:border-b print:rounded-none"
-            />
-          </label>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Renglones en blanco para completar a mano (así es en el documento
-// original: cada palabra con una línea de puntos al lado).
-function PlanillaLineItems({ title, items, values, onChangeItem }) {
-  return (
-    <div className="mb-6">
-      <h4 className="text-sm font-medium text-zinc-950 mb-2">{title}</h4>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 border border-gray-200 rounded-xl p-4 print:border-0 print:p-0">
-        {items.map((item) => (
-          <div key={item} className="flex items-center gap-2 text-sm">
-            <span className="text-gray-600 w-40 shrink-0">{item}</span>
-            <input
-              value={values[item] || ""}
-              onChange={(e) => onChangeItem(item, e.target.value)}
-              className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-950/10 print:border-0 print:border-b print:rounded-none"
-            />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PlanillaTable({ title, columns, items, values, onChangeCell, showIndex = true }) {
-  return (
-    <div className="mb-6">
-      <h4 className="text-sm font-medium text-zinc-950 mb-2">{title}</h4>
-      <div className="overflow-x-auto border border-gray-200 rounded-xl print:border-0">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-left text-gray-400 uppercase tracking-wide border-b border-gray-100">
-              {showIndex && <th className="py-2 px-2 w-8">N°</th>}
-              <th className="py-2 px-2">Producto</th>
-              {columns.map((col) => (
-                <th key={col.key} className="py-2 px-2">{col.label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item, index) => {
-              const row = values[item] || {};
-              return (
-                <tr key={item} className="border-b border-gray-50">
-                  {showIndex && <td className="py-1.5 px-2 text-gray-400">{index + 1}</td>}
-                  <td className="py-1.5 px-2 font-medium text-zinc-950">{item}</td>
-                  {columns.map((col) => (
-                    <td key={col.key} className="py-1.5 px-2">
-                      <input
-                        value={row[col.key] || ""}
-                        onChange={(e) => onChangeCell(item, col.key, e.target.value)}
-                        className="w-full rounded border border-gray-300 px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-950/10 print:border-0 print:border-b print:rounded-none"
-                      />
-                    </td>
-                  ))}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
 }
 
 function ProductSearchInline({ products, value, onPick }) {
@@ -1646,9 +1550,10 @@ function ProductSearchInline({ products, value, onPick }) {
         value={open ? query : value?.name || ""}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => { setQuery(""); setOpen(true); }}
-        placeholder="Buscar producto de Stock…"
-        className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-950/10"
+        placeholder="Vincular producto de Stock…"
+        className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-950/10 print:hidden"
       />
+      <span className="hidden print:inline text-xs text-gray-500">{value?.name || "—"}</span>
       {open && (
         <div className="absolute z-20 mt-1 w-full min-w-[220px] bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
           {suggestions.length === 0 ? (
@@ -1671,292 +1576,348 @@ function ProductSearchInline({ products, value, onPick }) {
   );
 }
 
-function ReturnEditor({ budget, products, planilla, planillaId, planillaType, onProcessed }) {
-  const alreadyProcessed = planilla?.retorno;
-  const [rows, setRows] = useState([{ productId: "", productName: "", costPrice: 0, salida: "", vuelta: "" }]);
+// Renglón fijo de la planilla: nombre fijo (de la plantilla) + vínculo opcional
+// con un producto real de Stock + cantidad faltante/consumida.
+function FixedConsumoRow({ label, link, quantity, products, onChangeLink, onChangeQuantity }) {
+  return (
+    <div className="grid grid-cols-12 gap-2 items-center py-1.5 border-b border-gray-50 last:border-0">
+      <div className="col-span-12 sm:col-span-5 text-sm text-gray-700">{label}</div>
+      <div className="col-span-8 sm:col-span-5">
+        <ProductSearchInline products={products} value={link} onPick={onChangeLink} />
+      </div>
+      <div className="col-span-4 sm:col-span-2">
+        <input
+          type="number" min="0" placeholder="Faltante"
+          value={quantity}
+          onChange={(e) => onChangeQuantity(e.target.value)}
+          className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs text-right focus:outline-none focus:ring-2 focus:ring-zinc-950/10 print:border-0 print:border-b print:rounded-none"
+        />
+      </div>
+    </div>
+  );
+}
+
+function FixedConsumoSection({ title, items, sectionValues, products, onChangeItem }) {
+  return (
+    <div className="mb-6">
+      <h4 className="text-sm font-medium text-zinc-950 mb-2">{title}</h4>
+      <div className="border border-gray-200 rounded-xl p-4 print:border-0 print:p-0">
+        {items.map((item) => {
+          const row = sectionValues[item] || {};
+          const link = row.productId ? { name: row.productName } : null;
+          return (
+            <FixedConsumoRow
+              key={item}
+              label={item}
+              link={link}
+              quantity={row.quantity ?? ""}
+              products={products}
+              onChangeLink={(p) => onChangeItem(item, { ...row, productId: p.id, productName: p.name, costPrice: p.costPrice || 0 })}
+              onChangeQuantity={(v) => onChangeItem(item, { ...row, quantity: v })}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ExtraItemsSection({ extras, products, onChange }) {
+  const addExtra = () => onChange([...extras, { productId: "", productName: "", costPrice: 0, quantity: "" }]);
+  const updateExtra = (index, patch) => onChange(extras.map((e, i) => (i === index ? { ...e, ...patch } : e)));
+  const removeExtra = (index) => onChange(extras.filter((_, i) => i !== index));
+
+  return (
+    <div className="mb-6 no-print">
+      <h4 className="text-sm font-medium text-zinc-950 mb-2">Otros productos faltantes (buscador libre)</h4>
+      <div className="border border-gray-200 rounded-xl p-4 space-y-2">
+        {extras.length === 0 && <p className="text-xs text-gray-400">Buscá y agregá cualquier otro producto de Stock que haya faltado.</p>}
+        {extras.map((extra, index) => (
+          <div key={index} className="grid grid-cols-12 gap-2 items-center">
+            <div className="col-span-8 sm:col-span-8">
+              <ProductSearchInline
+                products={products}
+                value={extra.productId ? { name: extra.productName } : null}
+                onPick={(p) => updateExtra(index, { productId: p.id, productName: p.name, costPrice: p.costPrice || 0 })}
+              />
+            </div>
+            <div className="col-span-3 sm:col-span-3">
+              <input
+                type="number" min="0" placeholder="Faltante"
+                value={extra.quantity}
+                onChange={(e) => updateExtra(index, { quantity: e.target.value })}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs text-right focus:outline-none focus:ring-2 focus:ring-zinc-950/10"
+              />
+            </div>
+            <div className="col-span-1 flex justify-end">
+              <button onClick={() => removeExtra(index)} className="p-1.5 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-700">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        ))}
+        <button
+          onClick={addExtra}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-zinc-950 px-2 py-1.5 rounded-lg hover:bg-gray-100"
+        >
+          <Plus className="w-3.5 h-3.5" /> Agregar producto
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function VehiculosEditor({ vehiculos, onChange }) {
+  const addVehiculo = () => onChange([...vehiculos, { name: "", fuelCost: "" }]);
+  const updateVehiculo = (index, patch) => onChange(vehiculos.map((v, i) => (i === index ? { ...v, ...patch } : v)));
+  const removeVehiculo = (index) => onChange(vehiculos.filter((_, i) => i !== index));
+
+  return (
+    <div className="space-y-2">
+      {vehiculos.map((v, index) => (
+        <div key={index} className="flex gap-2">
+          <input
+            className={inputClasses}
+            value={v.name}
+            onChange={(e) => updateVehiculo(index, { name: e.target.value })}
+            placeholder="Ej: Camioneta Fiorino"
+          />
+          <input
+            type="number" min="0"
+            className={`${inputClasses} w-40`}
+            value={v.fuelCost}
+            onChange={(e) => updateVehiculo(index, { fuelCost: e.target.value })}
+            placeholder="Costo combustible $"
+          />
+          <button onClick={() => removeVehiculo(index)} className="shrink-0 p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-700">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      ))}
+      <button
+        onClick={addVehiculo}
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-zinc-950 px-2 py-1.5 rounded-lg hover:bg-gray-100"
+      >
+        <Plus className="w-3.5 h-3.5" /> Añadir vehículo
+      </button>
+    </div>
+  );
+}
+
+function CierreEventoForm({ budget, providers, products, planilla, planillaId }) {
+  const draft = planilla || {};
+  const processed = draft.consumo;
+
+  const [organizerProviderId, setOrganizerProviderId] = useState(draft.organizerProviderId || budget.contactProviderId || "");
+  const [bebidas, setBebidas] = useState(draft.bebidas || {});
+  const [jugos, setJugos] = useState(draft.jugos || {});
+  const [frutasVarios, setFrutasVarios] = useState(draft.frutasVarios || {});
+  const [cristaleria, setCristaleria] = useState(draft.cristaleria || {});
+  const [extras, setExtras] = useState(draft.extras || []);
+  const [personalCount, setPersonalCount] = useState(draft.personal?.count ?? "");
+  const [personalCost, setPersonalCost] = useState(draft.personal?.totalCost ?? "");
+  const [vehiculos, setVehiculos] = useState(draft.vehiculos || []);
+  const [saving, setSaving] = useState(false);
   const [processing, setProcessing] = useState(false);
 
-  const addRow = () => setRows((prev) => [...prev, { productId: "", productName: "", costPrice: 0, salida: "", vuelta: "" }]);
-  const removeRow = (index) => setRows((prev) => prev.filter((_, i) => i !== index));
-  const updateRow = (index, patch) => setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  useEffect(() => {
+    setOrganizerProviderId(draft.organizerProviderId || budget.contactProviderId || "");
+    setBebidas(draft.bebidas || {});
+    setJugos(draft.jugos || {});
+    setFrutasVarios(draft.frutasVarios || {});
+    setCristaleria(draft.cristaleria || {});
+    setExtras(draft.extras || []);
+    setPersonalCount(draft.personal?.count ?? "");
+    setPersonalCost(draft.personal?.totalCost ?? "");
+    setVehiculos(draft.vehiculos || []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planillaId]);
 
-  const rowsWithConsumed = rows.map((r) => ({
-    ...r,
-    consumed: Math.max(0, (Number(r.salida) || 0) - (Number(r.vuelta) || 0)),
-  }));
-  const totalCost = rowsWithConsumed.reduce((sum, r) => sum + r.consumed * (Number(r.costPrice) || 0), 0);
-  const validRows = rowsWithConsumed.filter((r) => r.productId);
+  const buildDraft = () => ({
+    organizerProviderId,
+    bebidas, jugos, frutasVarios, cristaleria, extras,
+    personal: { count: Number(personalCount) || 0, totalCost: Number(personalCost) || 0 },
+    vehiculos,
+  });
+
+  const handleSave = async () => {
+    setSaving(true);
+    await savePlanilla(planillaId, buildDraft());
+    setSaving(false);
+  };
+
+  const allStockItems = () => {
+    const fromSections = [
+      ...Object.values(bebidas), ...Object.values(jugos), ...Object.values(frutasVarios),
+    ].map((row) => ({ ...row, isCristaleria: false }));
+    const fromCristaleria = Object.values(cristaleria).map((row) => ({ ...row, isCristaleria: true }));
+    const fromExtras = extras.map((e) => ({ ...e, isCristaleria: false }));
+    return [...fromSections, ...fromCristaleria, ...fromExtras].filter((r) => r.productId && Number(r.quantity) > 0);
+  };
 
   const handleProcess = async () => {
-    if (validRows.length === 0 || processing) return;
+    if (processing) return;
     setProcessing(true);
-    await processStockReturn({
+    const items = allStockItems().map((r) => ({
+      productId: r.productId,
+      productName: r.productName,
+      consumed: Number(r.quantity) || 0,
+      costPrice: Number(r.costPrice) || 0,
+      isCristaleria: !!r.isCristaleria,
+    }));
+    await processStockConsumption({
       planillaId,
       budgetId: budget.id,
       budgetLabel: budget.eventType,
-      planillaType,
-      items: validRows,
+      draft: buildDraft(),
+      items,
     });
     setProcessing(false);
-    if (onProcessed) onProcessed();
   };
 
-  if (alreadyProcessed) {
+  if (processed) {
     return (
-      <div className="bg-white border border-gray-200 rounded-2xl p-5">
-        <div className="flex items-center gap-2 mb-1">
+      <div id="printable-planilla" className="print-area bg-white border border-gray-200 rounded-2xl p-5 print:border-0 print:p-0">
+        <h3 className="font-display text-xl text-zinc-950 mb-1">DrunkCoq / Logística — Parte de Cierre</h3>
+        <div className="flex items-center gap-2 mb-4">
           <span className="w-2 h-2 rounded-full bg-emerald-600" />
-          <h3 className="text-sm font-medium text-zinc-950">Retorno ya procesado</h3>
+          <p className="text-xs text-emerald-700 font-medium">Consumo ya procesado — el Stock fue actualizado</p>
         </div>
-        <p className="text-xs text-gray-400 mb-4">
-          El stock ya fue actualizado para este evento. Si necesitás corregirlo, hacelo manualmente desde la sección Stock.
-        </p>
-        <div className="space-y-2">
-          {(alreadyProcessed.items || []).filter((i) => i.productId).map((item, i) => (
+        <PlanillaHeaderInfo budget={budget} providers={providers} organizerProviderId={processed.organizerProviderId} />
+        <div className="space-y-2 mb-6">
+          {(processed.items || []).map((item, i) => (
             <div key={i} className="flex items-center justify-between text-sm border-b border-gray-50 pb-2">
-              <span className="text-gray-700">{item.productName}</span>
+              <span className="text-gray-700">{item.productName} {item.isCristaleria && <span className="text-gray-400">(cristalería)</span>}</span>
               <span className="text-gray-500">Consumido: {item.consumed} · {formatMoney(item.consumed * (Number(item.costPrice) || 0))}</span>
             </div>
           ))}
         </div>
-        <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
-          <span className="text-sm text-gray-500">Costo total de mermas/consumo</span>
-          <span className="font-display text-lg text-zinc-950">{formatMoney(alreadyProcessed.totalCost)}</span>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <StatCard label="Stock consumido" value={formatMoney(processed.stockCost)} />
+          <StatCard label="Cristalería" value={formatMoney(processed.cristaleriaCost)} tone="alert" />
+          <StatCard label="Personal" value={formatMoney(processed.personalCost)} />
+          <StatCard label="Vehículos" value={formatMoney(processed.vehiculosCost)} />
+        </div>
+        <div className="flex items-center justify-between mt-5 pt-4 border-t border-gray-100">
+          <span className="text-sm text-gray-500">Costo total del evento</span>
+          <span className="font-display text-xl text-zinc-950">{formatMoney(processed.totalCost)}</span>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-2xl p-5">
-      <h3 className="text-sm font-medium text-zinc-950 mb-1">Registrar retorno del evento</h3>
-      <p className="text-xs text-gray-400 mb-4">
-        Elegí de tu Stock cada producto que salió para este evento, cuánto se llevó y cuánto volvió. La diferencia se descuenta del Stock y queda registrada como "Volvió" en el historial.
-      </p>
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 no-print">
+        <p className="text-xs text-gray-400 max-w-lg">
+          Cargá el faltante/consumo real al volver del evento. Al procesar, se descuenta del Stock y queda en el historial como "Consumido en evento".
+        </p>
+        <div className="flex gap-2">
+          <GhostButton icon={Save} onClick={handleSave}>{saving ? "Guardando…" : "Guardar borrador"}</GhostButton>
+          <PrimaryButton icon={Printer} onClick={() => printPlanilla({ budget })}>Imprimir / Guardar PDF</PrimaryButton>
+        </div>
+      </div>
 
-      <div className="space-y-3">
-        {rows.map((row, index) => {
-          const consumed = Math.max(0, (Number(row.salida) || 0) - (Number(row.vuelta) || 0));
-          return (
-            <div key={index} className="grid grid-cols-12 gap-2 items-center">
-              <div className="col-span-12 sm:col-span-5">
-                <ProductSearchInline
-                  products={products}
-                  value={row.productId ? { name: row.productName } : null}
-                  onPick={(p) => updateRow(index, { productId: p.id, productName: p.name, costPrice: p.costPrice || 0 })}
-                />
-              </div>
-              <div className="col-span-3 sm:col-span-2">
-                <input
-                  type="number" min="0" placeholder="Salió"
-                  value={row.salida}
-                  onChange={(e) => updateRow(index, { salida: e.target.value })}
-                  className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-950/10"
-                />
-              </div>
-              <div className="col-span-3 sm:col-span-2">
-                <input
-                  type="number" min="0" placeholder="Volvió"
-                  value={row.vuelta}
-                  onChange={(e) => updateRow(index, { vuelta: e.target.value })}
-                  className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-950/10"
-                />
-              </div>
-              <div className="col-span-4 sm:col-span-2 text-xs text-gray-500 text-right">
-                Consumido: <span className="text-zinc-950 font-medium">{consumed}</span>
-              </div>
-              <div className="col-span-2 sm:col-span-1 flex justify-end">
-                <button onClick={() => removeRow(index)} className="p-1.5 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-700">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+      <div id="printable-planilla" className="print-area bg-white border border-gray-200 rounded-2xl p-5 print:border-0 print:p-0">
+        <h3 className="font-display text-xl text-zinc-950 mb-1">DrunkCoq / Logística — Parte de Cierre</h3>
+        <p className="text-xs text-gray-400 mb-4">Faltantes, consumo y costos operativos del evento</p>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6 pb-4 border-b border-gray-200">
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wide">Fecha</p>
+            <p className="text-sm font-medium text-zinc-950">{formatDate(budget.date)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wide">Tipo de evento</p>
+            <p className="text-sm font-medium text-zinc-950">{budget.eventType}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wide">Localidad</p>
+            <p className="text-sm font-medium text-zinc-950">{budget.locality}</p>
+          </div>
+          <div className="no-print">
+            <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Organizador / Proveedor</p>
+            <Select
+              value={organizerProviderId}
+              onChange={setOrganizerProviderId}
+              className="w-full"
+              options={[
+                <option key="" value="">Sin asignar</option>,
+                ...providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>),
+              ]}
+            />
+          </div>
+        </div>
+
+        <FixedConsumoSection title="Bebidas" items={PLANILLA_BEBIDAS} sectionValues={bebidas} products={products} onChangeItem={(item, v) => setBebidas((prev) => ({ ...prev, [item]: v }))} />
+        <FixedConsumoSection title="Jugos, pulpas, almíbares y gaseosas" items={PLANILLA_JUGOS} sectionValues={jugos} products={products} onChangeItem={(item, v) => setJugos((prev) => ({ ...prev, [item]: v }))} />
+        <FixedConsumoSection title="Frutas, cervezas y varios" items={PLANILLA_FRUTAS_VARIOS} sectionValues={frutasVarios} products={products} onChangeItem={(item, v) => setFrutasVarios((prev) => ({ ...prev, [item]: v }))} />
+        <FixedConsumoSection title="Cristalería (roto / faltante)" items={PLANILLA_CRISTALERIA} sectionValues={cristaleria} products={products} onChangeItem={(item, v) => setCristaleria((prev) => ({ ...prev, [item]: v }))} />
+
+        <ExtraItemsSection extras={extras} products={products} onChange={setExtras} />
+
+        <div className="mb-6 no-print">
+          <h4 className="text-sm font-medium text-zinc-950 mb-2">Gastos de personal</h4>
+          <div className="border border-gray-200 rounded-xl p-4 grid grid-cols-2 gap-4">
+            <div>
+              <FieldLabel>Cantidad de empleados</FieldLabel>
+              <input type="number" min="0" className={inputClasses} value={personalCount} onChange={(e) => setPersonalCount(e.target.value)} />
             </div>
-          );
-        })}
+            <div>
+              <FieldLabel>Costo total de empleados</FieldLabel>
+              <input type="number" min="0" className={inputClasses} value={personalCost} onChange={(e) => setPersonalCost(e.target.value)} placeholder="$" />
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-2 no-print">
+          <h4 className="text-sm font-medium text-zinc-950 mb-2">Gastos de vehículos</h4>
+          <div className="border border-gray-200 rounded-xl p-4">
+            <VehiculosEditor vehiculos={vehiculos} onChange={setVehiculos} />
+          </div>
+        </div>
       </div>
 
-      <button
-        onClick={addRow}
-        className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-zinc-950 px-2 py-1.5 rounded-lg hover:bg-gray-100 mt-3"
-      >
-        <Plus className="w-3.5 h-3.5" /> Agregar producto
-      </button>
-
-      <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
-        <span className="text-sm text-gray-500">Costo total estimado de mermas/consumo</span>
-        <span className="font-display text-lg text-zinc-950">{formatMoney(totalCost)}</span>
-      </div>
-
-      <div className="flex justify-end mt-4">
-        <PrimaryButton onClick={handleProcess} disabled={processing || validRows.length === 0}>
-          {processing ? "Procesando…" : "Procesar retorno y actualizar Stock"}
+      <div className="flex justify-end mt-4 no-print">
+        <PrimaryButton onClick={handleProcess} disabled={processing}>
+          {processing ? "Procesando…" : "Procesar consumo y actualizar Stock"}
         </PrimaryButton>
       </div>
     </div>
   );
 }
 
-function PlanillaSaveBar({ onSave, saving, onPrint }) {
+function PlanillaHeaderInfo({ budget, providers, organizerProviderId }) {
+  const organizer = providers.find((p) => p.id === organizerProviderId);
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 mb-4 no-print">
-      <p className="text-xs text-gray-400">Los cambios no se guardan solos: usá "Guardar" antes de imprimir si hiciste modificaciones.</p>
-      <div className="flex gap-2">
-        <GhostButton icon={Save} onClick={onSave}>{saving ? "Guardando…" : "Guardar"}</GhostButton>
-        <PrimaryButton icon={Printer} onClick={onPrint}>Imprimir / Guardar PDF</PrimaryButton>
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6 pb-4 border-b border-gray-200">
+      <div>
+        <p className="text-xs text-gray-400 uppercase tracking-wide">Fecha</p>
+        <p className="text-sm font-medium text-zinc-950">{formatDate(budget.date)}</p>
+      </div>
+      <div>
+        <p className="text-xs text-gray-400 uppercase tracking-wide">Tipo de evento</p>
+        <p className="text-sm font-medium text-zinc-950">{budget.eventType}</p>
+      </div>
+      <div>
+        <p className="text-xs text-gray-400 uppercase tracking-wide">Localidad</p>
+        <p className="text-sm font-medium text-zinc-950">{budget.locality}</p>
+      </div>
+      <div>
+        <p className="text-xs text-gray-400 uppercase tracking-wide">Organizador</p>
+        <p className="text-sm font-medium text-zinc-950">{organizer?.name || "—"}</p>
       </div>
     </div>
   );
 }
 
-function PlanillaA({ budget, planilla, onSave }) {
-  const [values, setValues] = useState(() => planilla || {});
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => { setValues(planilla || {}); }, [planilla]);
-
-  const updateSection = (sectionKey, item, value) => {
-    setValues((prev) => ({ ...prev, [sectionKey]: { ...(prev[sectionKey] || {}), [item]: value } }));
-  };
-  const updateCheck = (key, value) => {
-    setValues((prev) => ({ ...prev, headerChecks: { ...(prev.headerChecks || {}), [key]: value } }));
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    await onSave(values);
-    setSaving(false);
-  };
-
-  return (
-    <div>
-      <PlanillaSaveBar onSave={handleSave} saving={saving} onPrint={() => printPlanilla({ tipo: "A", budget })} />
-
-      <div id="printable-planilla" className="print-area bg-white border border-gray-200 rounded-2xl p-5 print:border-0 print:p-0">
-        <h3 className="font-display text-xl text-zinc-950 mb-1">DrunkCoq / Logística — Planilla A</h3>
-        <p className="text-xs text-gray-400 mb-4">Herramientas y logística general</p>
-        <PlanillaHeader
-          budget={budget}
-          checks={values.headerChecks || {}}
-          headerChecks={PLANILLA_A_HEADER_CHECKS}
-          onChangeCheck={updateCheck}
-        />
-
-        {PLANILLA_A_NUMBER_SECTIONS.map((section) => (
-          <PlanillaNumberGrid
-            key={section.key}
-            title={section.title}
-            items={section.items}
-            values={values[section.key] || {}}
-            onChangeItem={(item, v) => updateSection(section.key, item, v)}
-          />
-        ))}
-
-        <PlanillaLineItems
-          title={PLANILLA_A_LINE_SECTION.title}
-          items={PLANILLA_A_LINE_SECTION.items}
-          values={values[PLANILLA_A_LINE_SECTION.key] || {}}
-          onChangeItem={(item, v) => updateSection(PLANILLA_A_LINE_SECTION.key, item, v)}
-        />
-      </div>
-    </div>
-  );
-}
-
-function PlanillaB({ budget, planilla, onSave }) {
-  const [values, setValues] = useState(() => planilla || {});
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => { setValues(planilla || {}); }, [planilla]);
-
-  const updateCell = (sectionKey, item, colKey, value) => {
-    setValues((prev) => ({
-      ...prev,
-      [sectionKey]: { ...(prev[sectionKey] || {}), [item]: { ...((prev[sectionKey] || {})[item] || {}), [colKey]: value } },
-    }));
-  };
-  const updateSimple = (sectionKey, item, value) => {
-    setValues((prev) => ({ ...prev, [sectionKey]: { ...(prev[sectionKey] || {}), [item]: value } }));
-  };
-  const updateCheck = (key, value) => {
-    setValues((prev) => ({ ...prev, headerChecks: { ...(prev.headerChecks || {}), [key]: value } }));
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    await onSave(values);
-    setSaving(false);
-  };
-
-  return (
-    <div>
-      <PlanillaSaveBar onSave={handleSave} saving={saving} onPrint={() => printPlanilla({ tipo: "B", budget })} />
-
-      <div id="printable-planilla" className="print-area bg-white border border-gray-200 rounded-2xl p-5 print:border-0 print:p-0">
-        <h3 className="font-display text-xl text-zinc-950 mb-1">DrunkCoq / Logística — Planilla B</h3>
-        <p className="text-xs text-gray-400 mb-4">Mercadería y consumos</p>
-        <PlanillaHeader
-          budget={budget}
-          checks={values.headerChecks || {}}
-          headerChecks={PLANILLA_B_HEADER_CHECKS}
-          onChangeCheck={updateCheck}
-        />
-
-        {PLANILLA_B_TABLE_SECTIONS.map((section) => (
-          <PlanillaTable
-            key={section.key}
-            title={section.title}
-            columns={section.columns}
-            items={section.items}
-            values={values[section.key] || {}}
-            onChangeCell={(item, colKey, v) => updateCell(section.key, item, colKey, v)}
-          />
-        ))}
-
-        {PLANILLA_B_LABELED_SECTIONS.map((section) => (
-          <PlanillaLabeledGrid
-            key={section.key}
-            title={section.title}
-            items={section.items}
-            values={values[section.key] || {}}
-            onChangeItem={(index, v) => updateSimple(section.key, index, v)}
-          />
-        ))}
-
-        {PLANILLA_B_NUMBER_SECTIONS.map((section) => (
-          <PlanillaNumberGrid
-            key={section.key}
-            title={section.title}
-            items={section.items}
-            values={values[section.key] || {}}
-            onChangeItem={(item, v) => updateSimple(section.key, item, v)}
-          />
-        ))}
-
-        {PLANILLA_B_STOCK_TABLE_SECTIONS.map((section) => (
-          <PlanillaTable
-            key={section.key}
-            title={section.title}
-            columns={section.columns}
-            items={section.items}
-            values={values[section.key] || {}}
-            onChangeCell={(item, colKey, v) => updateCell(section.key, item, colKey, v)}
-            showIndex={false}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PlanillaPage({ eyebrow, title, subtitle, budgets, products, planillaType, renderForm }) {
+function PlanillasSection({ budgets, providers, products, loading }) {
   const [selectedBudgetId, setSelectedBudgetId] = useState("");
-  const [mode, setMode] = useState("form"); // 'form' | 'retorno'
   const [planilla, setPlanilla] = useState(null);
   const [search, setSearch] = useState("");
 
   const numbers = useSequentialNumbers(budgets);
   const budget = budgets.find((b) => b.id === selectedBudgetId);
-  const planillaId = selectedBudgetId ? `${selectedBudgetId}_${planillaType}` : null;
 
   const filteredBudgets = useMemo(
     () => budgets.filter((b) => b.eventType.toLowerCase().includes(search.toLowerCase()) || b.venue.toLowerCase().includes(search.toLowerCase())),
@@ -1964,14 +1925,14 @@ function PlanillaPage({ eyebrow, title, subtitle, budgets, products, planillaTyp
   );
 
   useEffect(() => {
-    if (!planillaId) { setPlanilla(null); return; }
-    return subscribePlanilla(planillaId, setPlanilla);
-  }, [planillaId]);
+    if (!selectedBudgetId) { setPlanilla(null); return; }
+    return subscribePlanilla(selectedBudgetId, setPlanilla);
+  }, [selectedBudgetId]);
 
   return (
     <div>
-      <SectionHeader eyebrow={eyebrow} title={title} />
-      <p className="text-sm text-gray-400 -mt-4 mb-6">{subtitle}</p>
+      <SectionHeader eyebrow="Sección · ♠" title="Planillas" />
+      <p className="text-sm text-gray-400 -mt-4 mb-6 no-print">Parte de faltantes y cierre de evento.</p>
 
       <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 mb-6 no-print">
         <FieldLabel>Elegí un presupuesto</FieldLabel>
@@ -1994,66 +1955,11 @@ function PlanillaPage({ eyebrow, title, subtitle, budgets, products, planillaTyp
       </div>
 
       {!budget ? (
-        <EmptyState icon={Printer} message="Elegí un presupuesto arriba para ver su planilla." />
+        <EmptyState icon={Printer} message="Elegí un presupuesto arriba para ver su planilla de cierre." />
       ) : (
-        <>
-          <div className="flex gap-2 mb-4 no-print">
-            <button
-              onClick={() => setMode("form")}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${mode === "form" ? "bg-zinc-950 text-white" : "bg-white border border-gray-300 text-gray-600 hover:bg-gray-50"}`}
-            >
-              Completar planilla
-            </button>
-            <button
-              onClick={() => setMode("retorno")}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${mode === "retorno" ? "bg-zinc-950 text-white" : "bg-white border border-gray-300 text-gray-600 hover:bg-gray-50"}`}
-            >
-              Registrar retorno
-            </button>
-          </div>
-
-          {mode === "form" ? (
-            renderForm({ budget, planilla, onSave: (data) => savePlanilla(planillaId, data) })
-          ) : (
-            <ReturnEditor
-              budget={budget}
-              products={products}
-              planilla={planilla}
-              planillaId={planillaId}
-              planillaType={planillaType}
-            />
-          )}
-        </>
+        <CierreEventoForm budget={budget} providers={providers} products={products} planilla={planilla} planillaId={selectedBudgetId} />
       )}
     </div>
-  );
-}
-
-function PlanillaHerramientasSection({ budgets, products, loading }) {
-  return (
-    <PlanillaPage
-      eyebrow="Planillas · ♠"
-      title="Herramientas y Logística"
-      subtitle="Planilla A — completá el armado del evento o registrá el retorno para actualizar el Stock."
-      budgets={budgets}
-      products={products}
-      planillaType="A"
-      renderForm={({ budget, planilla, onSave }) => <PlanillaA budget={budget} planilla={planilla} onSave={onSave} />}
-    />
-  );
-}
-
-function PlanillaMercaderiaSection({ budgets, products, loading }) {
-  return (
-    <PlanillaPage
-      eyebrow="Planillas · ♠"
-      title="Mercadería y Consumos"
-      subtitle="Planilla B — completá el armado del evento o registrá el retorno para actualizar el Stock."
-      budgets={budgets}
-      products={products}
-      planillaType="B"
-      renderForm={({ budget, planilla, onSave }) => <PlanillaB budget={budget} planilla={planilla} onSave={onSave} />}
-    />
   );
 }
 
@@ -2068,15 +1974,7 @@ const NAV_ITEMS = [
       { key: "costcenter", label: "Centro de Costos", icon: BarChart3 },
     ],
   },
-  {
-    key: "planillas",
-    label: "Planillas",
-    icon: Printer,
-    children: [
-      { key: "planillas-herramientas", label: "Herramientas", icon: Printer },
-      { key: "planillas-mercaderia", label: "Mercadería", icon: Printer },
-    ],
-  },
+  { key: "planillas", label: "Planillas", icon: Printer },
   { key: "providers", label: "Proveedores", icon: Users },
 ];
 
@@ -2085,7 +1983,7 @@ const NAV_ITEMS = [
 const FLAT_NAV_ITEMS = NAV_ITEMS.flatMap((item) => item.children || [item]);
 
 function Sidebar({ section, setSection }) {
-  const [openGroups, setOpenGroups] = useState(() => new Set(["admin", "planillas"]));
+  const [openGroups, setOpenGroups] = useState(() => new Set(["admin"]));
   const toggleGroup = (key) => setOpenGroups((prev) => {
     const next = new Set(prev);
     next.has(key) ? next.delete(key) : next.add(key);
@@ -2303,13 +2201,13 @@ export default function App() {
               products={products}
               budgets={budgets}
               planillas={planillas}
+              providers={providers}
               categories={stockCategories}
               loading={!loaded.products || !loaded.budgets}
             />
           )}
           {section === "providers" && <ProvidersSection providers={providers} categories={providerCategories} loading={!loaded.providers} />}
-          {section === "planillas-herramientas" && <PlanillaHerramientasSection budgets={budgets} products={products} loading={!loaded.budgets} />}
-          {section === "planillas-mercaderia" && <PlanillaMercaderiaSection budgets={budgets} products={products} loading={!loaded.budgets} />}
+          {section === "planillas" && <PlanillasSection budgets={budgets} providers={providers} products={products} loading={!loaded.budgets} />}
         </main>
       </div>
 
